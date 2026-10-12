@@ -1,0 +1,29 @@
+# Render Blueprint: test (demo) sitesi — örnek verilerle, ücretsiz planda.
+# Render panelinde "New → Blueprint" ile bu depo seçildiğinde hizmet bu ayarlarla kurulur.
+services:
+  - type: web
+    name: kardelen-okul-test
+    runtime: node
+    rootDir: kardelen-okul       # GitHub deposunda kod bu alt klasörde (depo kökü bir üst klasör)
+    region: frankfurt            # Türkiye'ye en yakın bölge; sonradan değiştirilemez
+    plan: free
+    buildCommand: npm ci && npm run build:sunucu
+    startCommand: npm run start:sunucu
+    healthCheckPath: /api/saglik
+    autoDeployTrigger: commit    # GitHub'a her gönderimde yeniden yayınla
+    envVars:
+      - key: NODE_VERSION        # bilgisayarınızdakiyle aynı Node.js (24 LTS)
+        value: "24"
+      - key: HOSTNAME            # Render'ın istediği gibi tüm arayüzlerde dinle
+        value: 0.0.0.0
+      - key: SESSION_SECRET      # oturum imzası: Render rastgele üretir, kimseyle paylaşılmaz
+        generateValue: true
+      - key: DATA_SOURCE
+        value: mock
+      - key: DEMO_MODU           # üstte "TEST SİTESİ" bandı + veli SMS kodu ekranda
+        value: "true"
+      - key: SMS_PROVIDER
+        value: console
+      - key: EMAIL_PROVIDER
+        value: console
+      # SITE_URL boş bırakılırsa Render'ın verdiği https://...onrender.com adresi kullanılır.

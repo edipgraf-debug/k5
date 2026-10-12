@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+
+# yüklenen okul logoları (örnek logo hariç)
+veri/okul-logolari/*
+!veri/okul-logolari/ok-1001-ornek.png
