@@ -3,13 +3,15 @@ import { notFound, redirect } from 'next/navigation';
 import { oturumAl } from '@/lib/auth';
 import { repo } from '@/lib/data/repo';
 import { listeErisimi } from '@/lib/listeler';
+import { kalemleriGetir, satirAnahtari, satirFiyati, zorunluToplam as zorunluTopla } from '@/lib/kalem';
+import { ticaretRepo } from '@/lib/data/ticaret';
 import { hedefMetni, sepetDurumu, tarihSaat, tl } from '@/lib/bicim';
 import type { Rol } from '@/lib/types';
 import UstCubuk from '@/components/UstCubuk';
 import { Bolum, Kpi, KpiSatiri, Rozet, Sayfa, SayfaBasligi, SepetRozeti } from './Ortak';
 import TakipTablosu from './TakipTablosu';
 
-type PersonelRol = Exclude<Rol, 'veli'>;
+type PersonelRol = Exclude<Rol, 'veli' | 'plasiyer'>;
 
 /** /{ogretmen|okul|yonetim}/listeler/{id}: tavsiye sepeti detayı ve öğrenci bazında takip */
 export default async function SepetDetaySayfasi({ rol, id }: { rol: PersonelRol; id: number }) {
@@ -24,10 +26,11 @@ export default async function SepetDetaySayfasi({ rol, id }: { rol: PersonelRol;
     const subeler = new Set((await r.okulOgrencileri(liste.okulId, await r.personelSubeleri(o.sub))).map((x) => x.id));
     takip = takip.filter((t) => subeler.has(t.ogrenciId));
   }
-  const [urunler, okul] = await Promise.all([r.urunler(liste.satirlar.map((s) => s.urunId)), r.okul(liste.okulId)]);
+  const [kalemler, okul, siparisli] = await Promise.all([kalemleriGetir(liste.satirlar), r.okul(liste.okulId), (await ticaretRepo()).siparisVerenOgrenciler([liste.okulId])]);
   const rolOnek = `/${rol}`;
   const duzenle = `${rolOnek}/listeler?liste=${liste.id}${rol === 'yonetim' ? `&okulId=${liste.okulId}` : ''}`;
-  const zorunluToplam = liste.satirlar.reduce((a, s) => a + (s.zorunlu ? (s.satisFiyati ?? urunler.find((u) => u.id === s.urunId)?.fiyat ?? 0) * s.adet : 0), 0);
+  const zorunluToplam = zorunluTopla(liste.satirlar, kalemler);
+  const siparisVeren = takip.filter((t) => siparisli.has(t.ogrenciId)).length;
   const acik = takip.filter((t) => t.gorebilir);
   const ulasti = takip.filter((t) => t.sms === 'Gonderildi' || t.eposta === 'Gonderildi');
 
@@ -46,7 +49,7 @@ export default async function SepetDetaySayfasi({ rol, id }: { rol: PersonelRol;
           <Kpi ad="Sepet açık" deger={acik.length} alt={liste.hedefTipi === 'Toplu' && liste.yayinda ? 'Tüm sınıf' : 'Seçili öğrenciler'} />
           <Kpi ad="Bildirim ulaştı" deger={ulasti.length} alt={`${takip.filter((t) => t.sms === 'Hata').length} SMS ulaşmadı`} />
           <Kpi ad="Veli sepeti açtı" deger={takip.filter((t) => t.acildi).length} alt={acik.length ? `Oran: %${Math.round((takip.filter((t) => t.acildi).length / acik.length) * 100)}` : 'Sepet henüz kimseye açık değil'} />
-          <Kpi ad="Sipariş" deger="—" alt="Ödeme adımıyla birlikte izlenecek" />
+          <Kpi ad="Sipariş veren" deger={siparisVeren} alt={takip.length ? `Dönüşüm: %${Math.round((siparisVeren / takip.length) * 100)}` : 'Kapsamda öğrenci yok'} />
         </KpiSatiri>
 
         <Bolum id="takip" ust="ÖĞRENCİ BAZINDA" baslik="Bildirim ve takip"
@@ -55,19 +58,20 @@ export default async function SepetDetaySayfasi({ rol, id }: { rol: PersonelRol;
             bos={!liste.satirlar.length} rolOnek={rolOnek} />
         </Bolum>
 
-        <Bolum id="kitaplar" ust="İÇERİK" baslik={`${liste.satirlar.length} kitap`} aksiyon={<span className="font-bold">Zorunlu toplam: {tl(zorunluToplam)}</span>}>
+        <Bolum id="kitaplar" ust="İÇERİK" baslik={`${liste.satirlar.length} kalem`} aksiyon={<span className="font-bold">Zorunlu toplam: {tl(zorunluToplam)}</span>}>
           <ul className="flex flex-col">
             {liste.satirlar.map((s) => {
-              const u = urunler.find((x) => x.id === s.urunId);
+              const k = kalemler[satirAnahtari(s)];
               return (
-                <li key={s.urunId} className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EEF0F3] px-6 py-3">
+                <li key={satirAnahtari(s)} className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EEF0F3] px-6 py-3">
                   <div className="flex min-w-0 flex-col">
-                    <span className="font-bold">{u?.ad ?? `Ürün #${s.urunId}`}</span>
-                    <span className="text-[13px] text-metin-3">{[u?.yazar, u?.yayinevi].filter(Boolean).join(' · ')}</span>
+                    <span className="font-bold">{k?.tur === 'set' && <span className="mr-1.5 rounded bg-lacivert px-1.5 py-0.5 text-[11px] font-extrabold text-turuncu">SET</span>}{k?.ad ?? `Kalem ${satirAnahtari(s)}`}</span>
+                    <span className="text-[13px] text-metin-3">{k?.alt}</span>
+                    {k?.icerik && <span className="text-[13px] text-metin-3">{k.icerik.map((x) => (x.adet > 1 ? `${x.adet}× ${x.ad}` : x.ad)).join(', ')}</span>}
                   </div>
                   <div className="flex items-center gap-3">
                     <Rozet ton={s.zorunlu ? 'lacivert' : 'gri'}>{s.zorunlu ? 'Zorunlu' : 'İsteğe bağlı'}</Rozet>
-                    <span className="font-bold">{tl(s.satisFiyati ?? u?.fiyat ?? 0)}</span>
+                    <span className="font-bold">{tl(satirFiyati(s, k))}</span>
                   </div>
                 </li>
               );

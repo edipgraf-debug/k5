@@ -4,6 +4,7 @@ import { yonetimRepo } from '@/lib/data/yonetim';
 import UstCubuk from '@/components/UstCubuk';
 import { Sayfa, SayfaBasligi } from '@/components/panel/Ortak';
 import KullaniciFormu from '@/components/yonetim/KullaniciFormu';
+import { plasiyerSecenekleri } from '@/lib/yonetim';
 import HesapIslemleri from '@/components/yonetim/HesapIslemleri';
 import IslemGecmisi from '@/components/yonetim/IslemGecmisi';
 import { TIP_ADI } from '@/components/yonetim/etiketler';
@@ -18,7 +19,7 @@ export default async function Kullanici({ params }: { params: Promise<{ id: stri
   const y = await yonetimRepo();
   const k = await y.personelKaydi(id);
   if (!k) notFound();
-  const [okullar, islemler, siniflar] = await Promise.all([y.okulListesi(true), y.islemler('Kullanici', id), k.okulId ? y.okulSiniflari(k.okulId) : Promise.resolve(undefined)]);
+  const [okullar, islemler, siniflar, plasiyerler] = await Promise.all([y.okulListesi(true), y.islemler('Kullanici', id), k.okulId ? y.okulSiniflari(k.okulId) : Promise.resolve(undefined), plasiyerSecenekleri()]);
   const benim = id === o.sub;
   return (
     <>
@@ -27,7 +28,7 @@ export default async function Kullanici({ params }: { params: Promise<{ id: stri
         <SayfaBasligi baslik={k.adSoyad} alt={`${TIP_ADI[k.tip]}${k.okulAd ? ` · ${k.okulAd}` : ''} · ${k.eposta}`} geri={{ href: '/yonetim/kullanicilar', ad: 'Kullanıcılar' }} />
         <div className="flex flex-wrap items-start gap-6">
           <div className="min-w-0 flex-[999_1_560px]">
-            <KullaniciFormu kullanici={k} okullar={okullar.map((x) => ({ id: x.id, kod: x.kod, ad: x.ad }))} siniflar={siniflar} benim={benim} />
+            <KullaniciFormu kullanici={k} plasiyerler={plasiyerler} okullar={okullar.map((x) => ({ id: x.id, kod: x.kod, ad: x.ad, plasiyerId: x.plasiyerId }))} siniflar={siniflar} benim={benim} />
           </div>
           <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-6">
             <HesapIslemleri kullanici={k} benim={benim} />

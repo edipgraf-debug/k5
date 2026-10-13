@@ -6,19 +6,22 @@ import { YETKILER_LISTESI } from './yetkiler';
 import type { PersonelKaydi, PersonelTipi, SinifKaydi } from '@/lib/data/yonetim';
 import { Alan, Anahtar, DurumMesaji, FormKarti, GeciciSifreKutusu, Satir, Secenekler, useIstek } from './ortak';
 import { useSubeler } from './useSubeler';
+import type { PlasiyerSecenek } from './OkulFormu';
 
-interface OkulSecenek { id: number; kod: string; ad: string }
+interface OkulSecenek { id: number; kod: string; ad: string; plasiyerId?: number | null }
 
 const TIPLER: { id: PersonelTipi; ad: string; alt: string }[] = [
   { id: 'Ogretmen', ad: 'Öğretmen', alt: 'Kendi şubelerine sepet hazırlar' },
   { id: 'Okul', ad: 'Okul yetkilisi', alt: 'Okulun tamamını yönetir' },
+  { id: 'Plasiyer', ad: 'Plasiyer', alt: 'Bağlı okul ve öğretmenleri izler' },
   { id: 'Yonetim', ad: 'Kitabevi (Kardelen)', alt: 'Tüm okullar ve bu panel' },
 ];
 const VARSAYILAN_YETKI = ['KitapListe', 'TopluSiparis', 'TedarikRapor', 'SiparisRapor', 'Hakedis', 'OgrenciYonetim'];
 
 /** Yeni kullanıcı ya da kullanıcı bilgileri / rol / şubeler / yetkiler */
-export default function KullaniciFormu({ kullanici, okullar, varsayilan, siniflar, benim }:
-  { kullanici?: PersonelKaydi; okullar: OkulSecenek[]; varsayilan?: { tip?: PersonelTipi; okulId?: number | null }; siniflar?: SinifKaydi[]; benim?: boolean }) {
+export default function KullaniciFormu({ kullanici, okullar, varsayilan, siniflar, benim, plasiyerler = [] }:
+  { kullanici?: PersonelKaydi; okullar: OkulSecenek[]; varsayilan?: { tip?: PersonelTipi; okulId?: number | null }; siniflar?: SinifKaydi[]; benim?: boolean;
+    plasiyerler?: PlasiyerSecenek[] }) {
   const router = useRouter();
   const { durum, bekliyor, gonder } = useIstek();
   const [v, setV] = useState({
@@ -28,10 +31,13 @@ export default function KullaniciFormu({ kullanici, okullar, varsayilan, sinifla
     aktif: kullanici?.aktif ?? true,
     yetkiler: kullanici ? kullanici.yetkiler : VARSAYILAN_YETKI,
     subeIdleri: kullanici?.subeler.map((s) => s.id) ?? [],
+    opakPlasiyerKodu: kullanici?.opakPlasiyerKodu ?? '',
+    plasiyerId: kullanici?.plasiyerId ?? null as number | null,
   });
   const [epostaGonder, setEpostaGonder] = useState(true);
   const [sifre, setSifre] = useState<{ sifre: string; gitti: boolean; id: number } | null>(null);
-  const okulGerekli = v.tip !== 'Yonetim';
+  const okulGerekli = v.tip !== 'Yonetim' && v.tip !== 'Plasiyer';
+  const okulunPlasiyeri = plasiyerler.find((p) => p.id === okullar.find((o) => o.id === v.okulId)?.plasiyerId);
   const { subeler, yukleniyor } = useSubeler(okulGerekli ? v.okulId : null, kullanici && kullanici.okulId === v.okulId ? siniflar : varsayilan?.okulId === v.okulId ? siniflar : undefined);
 
   const coklu = <T,>(l: T[], x: T) => (l.includes(x) ? l.filter((y) => y !== x) : [...l, x]);
@@ -91,6 +97,20 @@ export default function KullaniciFormu({ kullanici, okullar, varsayilan, sinifla
             <span className="text-[13px] text-metin-3">Öğretmen yalnız bu şubelerin öğrencilerini görür ve onlara sepet yayınlar.</span>
           </div>
         )}
+        {v.tip === 'Ogretmen' && (
+          <Alan id="k-plasiyer" etiket="Plasiyer" ipucu={okulunPlasiyeri ? `Boş bırakılırsa okulun plasiyeri: ${okulunPlasiyeri.adSoyad}` : 'Boş bırakılırsa okulun plasiyeri geçerli olur (okula henüz atanmadı)'}>
+            <select id="k-plasiyer" className="girdi" value={v.plasiyerId ?? ''} onChange={(e) => setV({ ...v, plasiyerId: Number(e.target.value) || null })}>
+              <option value="">Okulun plasiyeri{okulunPlasiyeri ? ` (${okulunPlasiyeri.adSoyad})` : ''}</option>
+              {plasiyerler.map((p) => <option key={p.id} value={p.id}>{p.adSoyad}{p.kod ? ` · ${p.kod}` : ''}</option>)}
+            </select>
+          </Alan>
+        )}
+        {v.tip === 'Plasiyer' && (
+          <Alan id="k-opak" etiket="Opak plasiyer kodu" ipucu="Siparişler Opak'a bu plasiyer koduyla aktarılır">
+            <input id="k-opak" className="girdi" autoComplete="off" value={v.opakPlasiyerKodu} onChange={(e) => setV({ ...v, opakPlasiyerKodu: e.target.value })} placeholder="Ör. PL-01" />
+          </Alan>
+        )}
+        {v.tip === 'Plasiyer' && <p className="text-sm text-metin-2">Plasiyer kitabevi giriş ekranından (/yonetim/giris) girer; yalnız kendisine bağlı okul ve öğretmenleri, sepet ve tahsilat durumunu görür, kayıt değiştiremez.</p>}
         {v.tip === 'Okul' && (
           <fieldset className="flex flex-col gap-1">
             <legend className="etiket mb-1.5">Yetkiler</legend>

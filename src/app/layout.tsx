@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { demoModu } from '@/lib/ortam';
+import SiteAltBilgi from '@/components/SiteAltBilgi';
 
 export const metadata: Metadata = {
   title: { default: 'Kardelen Okul', template: '%s · Kardelen Okul' },
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         )}
         {children}
+        <SiteAltBilgi />
       </body>
     </html>
   );

@@ -51,6 +51,7 @@ export const OkulSema = z.object({
   opakCariKodu: istegeBagliMetin(30),
   opakWebCariKodu: istegeBagliMetin(30),
   aktif: z.boolean().default(true),
+  plasiyerId: z.number().int().positive().nullable().default(null),
 });
 
 export const VeliSema = z.object({
@@ -69,7 +70,7 @@ export const OgrenciSema = z.object({
 });
 
 export const PersonelSema = z.object({
-  tip: z.enum(['Yonetim', 'Okul', 'Ogretmen'], { message: 'Rol seçin' }),
+  tip: z.enum(['Yonetim', 'Plasiyer', 'Okul', 'Ogretmen'], { message: 'Rol seçin' }),
   okulId: z.number().int().positive().nullable().default(null),
   adSoyad: z.string().trim().min(3, 'Ad soyad girin').max(150),
   eposta: z.string().trim().toLowerCase().email('Geçerli bir e-posta girin').max(150),
@@ -77,10 +78,21 @@ export const PersonelSema = z.object({
   aktif: z.boolean().default(true),
   yetkiler: z.array(z.enum(['TopluSiparis', 'SiparisRapor', 'TedarikRapor', 'Hakedis', 'OgrenciYonetim', 'KitapListe', 'KullaniciYonetim'])).default([]),
   subeIdleri: z.array(z.number().int().positive()).max(100).default([]),
+  opakPlasiyerKodu: z.preprocess(bosNull, z.string().trim().toUpperCase().max(30).nullable().default(null)),
+  plasiyerId: z.number().int().positive().nullable().default(null),   // öğretmen: okulunkinden farklı plasiyer
 }).superRefine((v, ctx) => {
-  if (v.tip !== 'Yonetim' && !v.okulId) ctx.addIssue({ code: 'custom', path: ['okulId'], message: 'Okul seçin' });
-  if (v.tip === 'Yonetim' && v.okulId) ctx.addIssue({ code: 'custom', path: ['okulId'], message: 'Kitabevi kullanıcısı bir okula bağlanmaz' });
-});
+  const kitabevi = v.tip === 'Yonetim' || v.tip === 'Plasiyer';
+  if (!kitabevi && !v.okulId) ctx.addIssue({ code: 'custom', path: ['okulId'], message: 'Okul seçin' });
+  if (kitabevi && v.okulId) ctx.addIssue({ code: 'custom', path: ['okulId'], message: 'Kitabevi kullanıcısı ve plasiyer bir okula bağlanmaz' });
+}).transform((v) => ({ ...v, opakPlasiyerKodu: v.tip === 'Plasiyer' ? v.opakPlasiyerKodu : null, plasiyerId: v.tip === 'Ogretmen' ? v.plasiyerId : null }));
+
+/** Atanan kişinin aktif bir plasiyer olduğunu denetler; hata mesajı ya da null. */
+export async function plasiyerKontrol(plasiyerId: number | null): Promise<string | null> {
+  if (!plasiyerId) return null;
+  const { yonetimRepo } = await import('./data/yonetim');
+  const p = await (await yonetimRepo()).personelKaydi(plasiyerId);
+  return p && p.tip === 'Plasiyer' && p.aktif ? null : 'Seçilen plasiyer bulunamadı ya da pasif';
+}
 
 const HARFLER = 'abcdefghjkmnpqrstuvwxyz';
 const RAKAMLAR = '23456789';

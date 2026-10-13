@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { KitapListesi, OkulBilgi, SinifSecenegi, TakipSatiri, Urun } from '@/lib/types';
+import type { Kalem, KitapListesi, ListeSatiri, OkulBilgi, SinifSecenegi, TakipSatiri } from '@/lib/types';
+import { satirAnahtari, satirFiyati, zorunluToplam } from '@/lib/kalem-ortak';
 import { hedefMetni } from '@/lib/bicim';
 
 type Rol = 'ogretmen' | 'okul' | 'yonetim';
-interface Veri { okulId: number | null; okullar: OkulBilgi[]; secenekler: SinifSecenegi[]; listeler: KitapListesi[]; urunler: Urun[] }
+interface Veri { okulId: number | null; okullar: OkulBilgi[]; secenekler: SinifSecenegi[]; listeler: KitapListesi[]; kalemler: Record<string, Kalem> }
 interface AliciOzet { ogrenciSayisi: number; velisizOgrenci?: number; veliSayisi: number; epostaSayisi: number; epostasiOlmayan: number; smsOrnek: string | null }
 
 const tl = (n: number) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
@@ -31,7 +32,7 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
   const [veri, setVeri] = useState<Veri | null>(null);
   const [okulId, setOkulId] = useState<number | null>(null);
   const [seciliId, setSeciliId] = useState<number | null>(null);
-  const [urunler, setUrunler] = useState<Record<number, Urun>>({});
+  const [kalemler, setKalemler] = useState<Record<string, Kalem>>({});
   const [hata, setHata] = useState('');
   const [mesaj, setMesaj] = useState('');
   const [kaydediliyor, setKaydediliyor] = useState(false);
@@ -41,7 +42,7 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
   const [yeniSecim, setYeniSecim] = useState<string>('');
   // katalog
   const [q, setQ] = useState('');
-  const [sonuclar, setSonuclar] = useState<Urun[]>([]);
+  const [sonuclar, setSonuclar] = useState<Kalem[]>([]);
   // yayın
   const [modal, setModal] = useState<AliciOzet | null>(null);
   const [hedef, setHedef] = useState<'toplu' | 'secili'>('toplu');
@@ -57,7 +58,7 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
       const v = await istek<Veri>(`/api/listeler${oid ? `?okulId=${oid}` : ''}`);
       setVeri(v);
       setOkulId(v.okulId);
-      setUrunler((m) => ({ ...m, ...Object.fromEntries(v.urunler.map((u) => [u.id, u])) }));
+      setKalemler((m) => ({ ...m, ...v.kalemler }));
       const istenen = Number(new URLSearchParams(window.location.search).get('liste'));
       setSeciliId((s) => (s && v.listeler.some((l) => l.id === s) ? s : v.listeler.some((l) => l.id === istenen) ? istenen : v.listeler[0]?.id ?? null));
     } catch (e) { setHata((e as Error).message); }
@@ -76,9 +77,9 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
     if (zamanlayici.current) clearTimeout(zamanlayici.current);
     zamanlayici.current = setTimeout(async () => {
       try {
-        const v = await istek<{ urunler: Urun[] }>(`/api/katalog?q=${encodeURIComponent(q)}`);
-        setSonuclar(v.urunler);
-        setUrunler((m) => ({ ...m, ...Object.fromEntries(v.urunler.map((u) => [u.id, u])) }));
+        const v = await istek<{ kalemler: Kalem[] }>(`/api/katalog?q=${encodeURIComponent(q)}`);
+        setSonuclar(v.kalemler);
+        setKalemler((m) => ({ ...m, ...Object.fromEntries(v.kalemler.map((k) => [k.anahtar, k])) }));
       } catch { /* yok say */ }
     }, 250);
   }, [q]);
@@ -167,7 +168,7 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
   if (!veri) return <main className="mx-auto max-w-[1280px] px-6 py-10 text-metin-2">{hata || 'Yükleniyor…'}</main>;
 
   const kim = rol === 'ogretmen' ? 'Yalnız size atanmış şubeler' : rol === 'okul' ? 'Okulunuzun tüm sınıf ve şubeleri' : 'Kitabevi olarak seçilen okul adına, tüm sınıf ve şubeler';
-  const toplam = liste ? liste.satirlar.reduce((a, s) => a + (s.zorunlu ? (s.satisFiyati ?? urunler[s.urunId]?.fiyat ?? 0) : 0), 0) : 0;
+  const toplam = liste ? zorunluToplam(liste.satirlar, kalemler) : 0;
 
   return (
     <main className="mx-auto flex max-w-[1280px] flex-col gap-5 px-4 pb-16 pt-7 sm:px-6">
@@ -223,7 +224,7 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
             <button key={l.id} type="button" role="tab" aria-selected={on} onClick={() => { setSeciliId(l.id); setMesaj(''); }}
               className={`flex min-h-[100px] cursor-pointer flex-col gap-1.5 rounded-2xl border-2 bg-white p-4 text-left ${on ? 'border-turuncu shadow-[0_6px_18px_rgba(23,35,52,0.08)]' : 'border-cizgi'}`}>
               <span className="font-baslik text-base font-extrabold">{l.ad}</span>
-              <span className="text-sm text-metin-2">{l.kapsamAd} · {l.satirlar.length} kitap</span>
+              <span className="text-sm text-metin-2">{l.kapsamAd} · {l.satirlar.length} kalem</span>
               <span className="text-[13px] text-metin-3">{hedefMetni(l)}</span>
               <span className={`self-start rounded-lg px-2.5 py-1 text-[13px] font-extrabold ${dd.cls}`}>{dd.ad}</span>
             </button>
@@ -257,13 +258,14 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
               </div>
             </div>
             {liste.satirlar.map((s, i) => {
-              const u = urunler[s.urunId];
+              const k = kalemler[satirAnahtari(s)];
               return (
-                <div key={s.urunId} className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-[#EEF0F3] px-6 py-3.5">
-                  <div aria-hidden="true" className="h-[54px] w-10 flex-none rounded-md bg-[#E9ECF1]" />
+                <div key={satirAnahtari(s)} className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-[#EEF0F3] px-6 py-3.5">
+                  <div aria-hidden="true" className={`flex h-[54px] w-10 flex-none items-center justify-center rounded-md text-[11px] font-extrabold ${k?.tur === 'set' ? 'bg-lacivert text-turuncu' : 'bg-[#E9ECF1]'}`}>{k?.tur === 'set' ? 'SET' : ''}</div>
                   <div className="flex min-w-0 flex-[1_1_220px] flex-col gap-0.5">
-                    <span className="font-baslik text-[15px] font-bold">{u?.ad ?? `Ürün #${s.urunId}`}</span>
-                    <span className="text-[13px] text-metin-2">{u?.yayinevi} · {tl(s.satisFiyati ?? u?.fiyat ?? 0)}</span>
+                    <span className="font-baslik text-[15px] font-bold">{k?.ad ?? (s.setId ? `Set #${s.setId}` : `Ürün #${s.urunId}`)}</span>
+                    <span className="text-[13px] text-metin-2">{k?.alt ? `${k.alt} · ` : ''}{tl(satirFiyati(s, k))}</span>
+                    {k?.icerik && <span className="text-[13px] text-metin-3">{k.icerik.map((x) => (x.adet > 1 ? `${x.adet}× ${x.ad}` : x.ad)).join(', ')}</span>}
                   </div>
                   <div role="group" aria-label="Tür" className="flex gap-1.5">
                     {[true, false].map((z) => (
@@ -279,26 +281,27 @@ export default function ListeYonetimi({ rol }: { rol: Rol }) {
                 </div>
               );
             })}
-            {!liste.satirlar.length && <p className="p-6 text-metin-2">Bu sepet boş. Sağdaki katalogdan kitap ekleyin.</p>}
+            {!liste.satirlar.length && <p className="p-6 text-metin-2">Bu sepet boş. Sağdaki katalogdan kitap ya da set ekleyin.</p>}
           </section>
 
           <aside aria-label="Katalog" className="flex min-w-0 flex-[1_1_360px] flex-col gap-4">
             <div className="kart flex flex-col gap-3.5 p-5">
               <span className="text-xs font-extrabold tracking-wider text-kiremit">KATALOG</span>
-              <label htmlFor="kq" className="font-baslik text-[17px] font-extrabold">Kitap ekle</label>
-              <input id="kq" type="search" className="girdi" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Kitap, yazar, yayınevi veya barkod" />
+              <label htmlFor="kq" className="font-baslik text-[17px] font-extrabold">Kitap ya da set ekle</label>
+              <input id="kq" type="search" className="girdi" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Kitap, set, yazar, yayınevi veya barkod" />
               <div className="flex flex-col">
                 {sonuclar.map((u) => {
-                  const var_ = liste.satirlar.some((s) => s.urunId === u.id);
+                  const var_ = liste.satirlar.some((s) => satirAnahtari(s) === u.anahtar);
+                  const yeni: ListeSatiri = u.tur === 'set' ? { urunId: null, setId: u.id, adet: 1, zorunlu: true, satisFiyati: null } : { urunId: u.id, setId: null, adet: 1, zorunlu: true, satisFiyati: null };
                   return (
-                    <div key={u.id} className="flex items-center gap-3 border-b border-[#EEF0F3] py-2.5">
+                    <div key={u.anahtar} className="flex items-center gap-3 border-b border-[#EEF0F3] py-2.5">
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="text-sm font-bold">{u.ad}</span>
-                        <span className="text-[13px] text-metin-2">{u.yayinevi} · {tl(u.fiyat)}</span>
+                        <span className="text-sm font-bold">{u.tur === 'set' && <span className="mr-1.5 rounded bg-lacivert px-1.5 py-0.5 text-[11px] font-extrabold text-turuncu">SET</span>}{u.ad}</span>
+                        <span className="text-[13px] text-metin-2">{u.alt ? `${u.alt} · ` : ''}{tl(u.fiyat)}</span>
                       </div>
                       <button type="button" aria-pressed={var_}
                         aria-label={var_ ? `${u.ad} sepetten çıkar` : `${u.ad} sepete ekle`}
-                        onClick={() => satirlariKaydet(var_ ? liste.satirlar.filter((s) => s.urunId !== u.id) : [...liste.satirlar, { urunId: u.id, adet: 1, zorunlu: true, satisFiyati: null }])}
+                        onClick={() => satirlariKaydet(var_ ? liste.satirlar.filter((s) => satirAnahtari(s) !== u.anahtar) : [...liste.satirlar, yeni])}
                         className={`min-h-10 min-w-[84px] cursor-pointer rounded-[10px] border-2 text-[13px] font-bold ${var_ ? 'border-yesil-zemin bg-yesil-zemin text-yesil' : 'border-lacivert bg-lacivert text-white'}`}>
                         {var_ ? 'Sepette' : 'Ekle'}
                       </button>

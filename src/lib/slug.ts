@@ -3,6 +3,7 @@
 export const AYRILMIS = new Set([
   'giris', 'veli', 'ogretmen', 'okul', 'yonetim', 'api', 'yasal', '_next', 'favicon.ico', 'robots.txt', 'sitemap.xml',
   'logo.png', 'logo-mark.png', 'kardelen', 'admin', 'static', 'public', 'sepet', 'hesap', 'siparis', 'odeme', 'kitabevi',
+  'plasiyer', 'katalog', 'kampanyalar', 'kampanya', 'sayfa', 'destek', 'sifre-degistir', 'iletisim',
 ]);
 
 const DESEN = /^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$/;

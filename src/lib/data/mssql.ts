@@ -66,8 +66,8 @@ export class MssqlRepo implements Repo {
   private async listeleriTamamla(rows: ListeSatirDb[]): Promise<KitapListesi[]> {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.Id);
-    const satirlar = await q<{ KitapListeId: number; UrunId: number; Adet: number; ZorunluMu: boolean; SatisFiyati: number | null }>(
-      `SELECT KitapListeId, UrunId, Adet, ZorunluMu, SatisFiyati FROM dbo.KitapListeSatir
+    const satirlar = await q<{ KitapListeId: number; UrunId: number | null; SetId: number | null; Adet: number; ZorunluMu: boolean; SatisFiyati: number | null }>(
+      `SELECT KitapListeId, UrunId, SetId, Adet, ZorunluMu, SatisFiyati FROM dbo.KitapListeSatir
        WHERE KitapListeId IN (SELECT CAST(value AS INT) FROM STRING_SPLIT(@ids, ',')) ORDER BY KitapListeId, Sira, Id`,
       [['ids', sql.NVarChar(sql.MAX), ids.join(',')]]);
     const hedefler = await q<{ KitapListeId: number; OgrenciId: number }>(
@@ -79,7 +79,7 @@ export class MssqlRepo implements Repo {
       hedefTipi: r.HedefTipi, hedefOgrenciler: hedefler.filter((h) => h.KitapListeId === r.Id).map((h) => h.OgrenciId),
       yayinTarihi: r.YayinTarihi, guncelleme: r.GuncellemeTarihi,
       satirlar: satirlar.filter((s) => s.KitapListeId === r.Id).map((s) => ({
-        urunId: s.UrunId, adet: s.Adet, zorunlu: !!s.ZorunluMu, satisFiyati: s.SatisFiyati == null ? null : Number(s.SatisFiyati),
+        urunId: s.UrunId, setId: s.SetId, adet: s.Adet, zorunlu: !!s.ZorunluMu, satisFiyati: s.SatisFiyati == null ? null : Number(s.SatisFiyati),
       })),
     }));
   }
@@ -177,21 +177,21 @@ export class MssqlRepo implements Repo {
     return this.listeleriTamamla(rows);
   }
 
-  private urunMap(r: { Id: number; OpakStokKodu: string; Barkod: string | null; Ad: string; Yayinevi: string | null; Yazar: string | null; Kategori: string | null; ListeFiyati: number }): Urun {
-    return { id: r.Id, opakStokKodu: r.OpakStokKodu, barkod: r.Barkod, ad: r.Ad, yayinevi: r.Yayinevi, yazar: r.Yazar, kategori: r.Kategori, fiyat: Number(r.ListeFiyati) };
+  private urunMap(r: { Id: number; OpakStokKodu: string; Barkod: string | null; Ad: string; Yayinevi: string | null; Yazar: string | null; Kategori: string | null; Fiyat: number; StokMiktari?: number | null; KapakDosya?: string | null }): Urun {
+    return { id: r.Id, opakStokKodu: r.OpakStokKodu, barkod: r.Barkod, ad: r.Ad, yayinevi: r.Yayinevi, yazar: r.Yazar, kategori: r.Kategori, fiyat: Number(r.Fiyat), stok: r.StokMiktari ?? null, kapak: !!r.KapakDosya };
   }
 
   async urunler(ids: number[]) {
     if (!ids.length) return [];
     const r = await q<Parameters<MssqlRepo['urunMap']>[0]>(
-      `SELECT Id, OpakStokKodu, Barkod, Ad, Yayinevi, Yazar, Kategori, ListeFiyati FROM dbo.Urun
+      `SELECT Id, OpakStokKodu, Barkod, Ad, Yayinevi, Yazar, Kategori, ISNULL(WebFiyati, ListeFiyati) AS Fiyat, StokMiktari, KapakDosya FROM dbo.Urun
        WHERE Id IN (SELECT CAST(value AS INT) FROM STRING_SPLIT(@ids, ','))`, [['ids', sql.NVarChar(sql.MAX), ids.join(',')]]);
     return r.map((x) => this.urunMap(x));
   }
 
   async urunAra(qs: string, limit = 30) {
     const r = await q<Parameters<MssqlRepo['urunMap']>[0]>(
-      `SELECT TOP (@lim) Id, OpakStokKodu, Barkod, Ad, Yayinevi, Yazar, Kategori, ListeFiyati FROM dbo.Urun
+      `SELECT TOP (@lim) Id, OpakStokKodu, Barkod, Ad, Yayinevi, Yazar, Kategori, ISNULL(WebFiyati, ListeFiyati) AS Fiyat, StokMiktari, KapakDosya FROM dbo.Urun
        WHERE AktifMi = 1 AND (@s = '' OR Ad LIKE @l OR Yayinevi LIKE @l OR Yazar LIKE @l OR Barkod = @s OR OpakStokKodu = @s)
        ORDER BY Ad`, [['lim', sql.Int, limit], ['s', sql.NVarChar(100), qs.trim()], ['l', sql.NVarChar(110), `%${qs.trim()}%`]]);
     return r.map((x) => this.urunMap(x));
@@ -323,8 +323,8 @@ export class MssqlRepo implements Repo {
       await q(`DELETE FROM dbo.KitapListeSatir WHERE KitapListeId = @id`, [['id', sql.Int, id]], tx);
       let sira = 0;
       for (const s of satirlar) {
-        await q(`INSERT INTO dbo.KitapListeSatir (KitapListeId, UrunId, Adet, ZorunluMu, SatisFiyati, Sira) VALUES (@id, @u, @a, @z, @f, @s)`, [
-          ['id', sql.Int, id], ['u', sql.Int, s.urunId], ['a', sql.Int, s.adet], ['z', sql.Bit, s.zorunlu],
+        await q(`INSERT INTO dbo.KitapListeSatir (KitapListeId, UrunId, SetId, Adet, ZorunluMu, SatisFiyati, Sira) VALUES (@id, @u, @st, @a, @z, @f, @s)`, [
+          ['id', sql.Int, id], ['u', sql.Int, s.setId ? null : s.urunId], ['st', sql.Int, s.setId ?? null], ['a', sql.Int, s.adet], ['z', sql.Bit, s.zorunlu],
           ['f', sql.Decimal(18, 2), s.satisFiyati], ['s', sql.Int, sira++]], tx);
       }
       await q(`UPDATE dbo.KitapListe SET GuncellemeTarihi = SYSDATETIME() WHERE Id = @id`, [['id', sql.Int, id]], tx);

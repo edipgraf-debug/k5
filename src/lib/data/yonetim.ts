@@ -19,8 +19,10 @@ export interface OkulKaydi {
   opakWebCariKodu: string | null;
   aktif: boolean;
   slug: string | null;
+  plasiyerId: number | null;
+  plasiyerAd: string | null;
 }
-export type OkulGirdi = Omit<OkulKaydi, 'id' | 'slug'>;
+export type OkulGirdi = Omit<OkulKaydi, 'id' | 'slug' | 'plasiyerAd'>;
 
 export interface SubeKaydi { id: number; ad: string; ogrenci: number; ogretmen: number }
 export interface SinifKaydi { id: number; seviye: number; ad: string; subeler: SubeKaydi[] }
@@ -52,7 +54,7 @@ export interface OgrenciKaydi {
 }
 export interface OgrenciGirdi { okulId: number; okulNo: string; ad: string; soyad: string; subeId: number; aktif: boolean }
 
-export type PersonelTipi = 'Yonetim' | 'Okul' | 'Ogretmen';
+export type PersonelTipi = 'Yonetim' | 'Plasiyer' | 'Okul' | 'Ogretmen';
 export interface PersonelKaydi {
   id: number;
   tip: PersonelTipi;
@@ -67,6 +69,10 @@ export interface PersonelKaydi {
   sonGiris: Date | null;
   yetkiler: string[];
   subeler: { id: number; ad: string }[];
+  opakPlasiyerKodu: string | null;      // Tip = Plasiyer
+  plasiyerId: number | null;            // Tip = Ogretmen: okulunkinden farklı atanmış plasiyer (null = okulun plasiyeri)
+  gecerliPlasiyerId: number | null;     // öğretmen: atanmış ?? okulun plasiyeri; okul yetkilisi: okulun plasiyeri
+  gecerliPlasiyerAd: string | null;
 }
 export interface PersonelGirdi {
   tip: PersonelTipi;
@@ -77,12 +83,32 @@ export interface PersonelGirdi {
   aktif: boolean;
   yetkiler: string[];
   subeIdleri: number[];
+  opakPlasiyerKodu: string | null;
+  plasiyerId: number | null;
 }
 
-export interface IslemKaydi { id: number; kullanici: string; islem: string; ayrinti: string | null; tarih: Date }
-export type HedefTip = 'Okul' | 'Ogrenci' | 'Veli' | 'Kullanici';
+export interface PlasiyerOzeti {
+  id: number;
+  adSoyad: string;
+  eposta: string;
+  telefon: string | null;
+  opakPlasiyerKodu: string | null;
+  aktif: boolean;
+  okulSayisi: number;
+  ogretmenSayisi: number;       // geçerli plasiyeri bu kişi olan öğretmenler
+  ozelOgretmen: number;         // okulun plasiyerinden farklı olarak bu kişiye bağlananlar
+}
 
-export interface AramaFiltresi { q?: string; okulId?: number | null; subeId?: number | null; pasifDahil?: boolean; limit?: number }
+export interface IslemLogSatiri { id: number; kullanici: string; hedef: string; hedefId: number; islem: string; ayrinti: string | null; tarih: Date }
+export interface IslemLogFiltresi { hedef?: string | null; q?: string; baslangic?: Date | null; bitis?: Date | null; limit?: number }
+
+export interface IslemKaydi { id: number; kullanici: string; islem: string; ayrinti: string | null; tarih: Date }
+export type HedefTip = 'Okul' | 'Ogrenci' | 'Veli' | 'Kullanici' | 'Urun' | 'Set' | 'Odeme' | 'Ayar' | 'Sayfa' | 'Banka' | 'Kargo' | 'Pos' | 'Kategori' | 'Kampanya' | 'Hakedis';
+
+export interface AramaFiltresi {
+  q?: string; okulId?: number | null; subeId?: number | null; seviye?: number | null; pasifDahil?: boolean; limit?: number;
+  okulIdleri?: number[] | null;   // plasiyer: yalnız kendi okulları
+}
 
 /** Benzersizlik ihlallerinde fırlatılır; mesaj kullanıcıya gösterilebilir. */
 export class KayitHatasi extends Error {}
@@ -90,7 +116,8 @@ export class KayitHatasi extends Error {}
 export interface YonetimRepo {
   // okul
   okulKaydi(id: number): Promise<OkulKaydi | null>;
-  okulListesi(pasifDahil?: boolean): Promise<OkulKaydi[]>;
+  okulListesi(pasifDahil?: boolean, plasiyerId?: number | null): Promise<OkulKaydi[]>;
+  okulPlasiyerAta(okulId: number, plasiyerId: number | null): Promise<void>;
   okulEkle(o: OkulGirdi): Promise<number>;
   okulGuncelle(id: number, o: OkulGirdi): Promise<void>;
   okulKodOner(): Promise<string>;
@@ -114,7 +141,11 @@ export interface YonetimRepo {
   veliSifreSifirla(id: number): Promise<void>;
   veliKilitAc(id: number): Promise<void>;
   // kullanıcılar
-  personelListesi(f: { q?: string; tip?: PersonelTipi | null; okulId?: number | null; pasifDahil?: boolean }): Promise<PersonelKaydi[]>;
+  personelListesi(f: { q?: string; tip?: PersonelTipi | null; okulId?: number | null; pasifDahil?: boolean; plasiyerId?: number | null }): Promise<PersonelKaydi[]>;
+  plasiyerListesi(pasifDahil?: boolean): Promise<PlasiyerOzeti[]>;
+  ogretmenPlasiyerAta(kullaniciId: number, plasiyerId: number | null): Promise<void>;
+  /** Okul sayfasında sınıf filtresi için: okulun seviyeleri (aktif sezon) */
+  seviyeler(okulId?: number | null): Promise<number[]>;
   personelKaydi(id: number): Promise<PersonelKaydi | null>;
   personelEkle(p: PersonelGirdi, sifreHash: string): Promise<number>;
   personelDuzenle(id: number, p: PersonelGirdi): Promise<void>;
@@ -131,6 +162,7 @@ export interface YonetimRepo {
   // işlem kaydı
   islemYaz(kullaniciId: number, hedef: HedefTip, hedefId: number, islem: string, ayrinti?: string | null): Promise<void>;
   islemler(hedef: HedefTip, hedefId: number, limit?: number): Promise<IslemKaydi[]>;
+  islemLog(f: IslemLogFiltresi): Promise<IslemLogSatiri[]>;
 }
 
 let ornek: YonetimRepo | undefined;

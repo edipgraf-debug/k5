@@ -9,14 +9,14 @@ import { TIP_ADI } from '@/components/yonetim/etiketler';
 
 export const metadata = { title: 'Kullanıcılar' };
 
-const TIPLER: (PersonelTipi | '')[] = ['', 'Ogretmen', 'Okul', 'Yonetim'];
+const TIPLER: (PersonelTipi | '')[] = ['', 'Ogretmen', 'Okul', 'Plasiyer', 'Yonetim'];
 
 export default async function Kullanicilar({ searchParams }: { searchParams: Promise<{ q?: string; tip?: string; okulId?: string; pasif?: string }> }) {
   const o = await oturumAl();
   if (!o || o.rol !== 'yonetim') redirect('/yonetim/giris');
   const sp = await searchParams;
   const q = (sp.q ?? '').trim();
-  const tip = (['Ogretmen', 'Okul', 'Yonetim'] as const).find((t) => t === sp.tip) ?? null;
+  const tip = (['Ogretmen', 'Okul', 'Plasiyer', 'Yonetim'] as const).find((t) => t === sp.tip) ?? null;
   const okulId = Number(sp.okulId) || null;
   const pasif = sp.pasif === '1';
   const y = await yonetimRepo();
@@ -75,6 +75,8 @@ export default async function Kullanicilar({ searchParams }: { searchParams: Pro
                       <td className={TABLO.td}>
                         {k.okulAd ?? '—'}
                         {k.tip === 'Ogretmen' && <span className="block text-[13px] text-metin-3">{k.subeler.map((s) => s.ad).join(', ') || 'şube atanmamış'}</span>}
+                        {k.tip === 'Plasiyer' && <span className="block text-[13px] text-metin-3">Opak kodu: {k.opakPlasiyerKodu ?? '—'}</span>}
+                        {(k.tip === 'Ogretmen' || k.tip === 'Okul') && <span className="block text-[13px] text-metin-3">Plasiyer: {k.gecerliPlasiyerAd ?? 'atanmadı'}{k.plasiyerId ? ' (öğretmene özel)' : ''}</span>}
                       </td>
                       <td className={TABLO.td}>{k.eposta}</td>
                       <td className={TABLO.td}>{k.sonGiris ? tarihSaat(k.sonGiris) : '—'}</td>

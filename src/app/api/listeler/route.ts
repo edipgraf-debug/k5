@@ -4,6 +4,7 @@ import { repo } from '@/lib/data/repo';
 import { govde, hata } from '@/lib/api';
 import { rolGerekli } from '@/lib/auth';
 import { izinliSecenekler, listeErisimi, okulBelirle } from '@/lib/listeler';
+import { kalemleriGetir } from '@/lib/kalem';
 
 export async function GET(req: Request) {
   const o = await rolGerekli('ogretmen', 'okul', 'yonetim');
@@ -12,15 +13,14 @@ export async function GET(req: Request) {
   const istenen = Number(new URL(req.url).searchParams.get('okulId')) || null;
   const okullar = o.rol === 'yonetim' ? await r.okullar() : [];
   const okulId = okulBelirle(o, istenen ?? okullar[0]?.id ?? null);
-  if (!okulId) return NextResponse.json({ okulId: null, okullar, secenekler: [], listeler: [], urunler: [] });
+  if (!okulId) return NextResponse.json({ okulId: null, okullar, secenekler: [], listeler: [], kalemler: {} });
 
   const secenekler = await izinliSecenekler(o, okulId);
   const tum = await r.okulListeleri(okulId);
   const listeler = [];
   for (const l of tum) if (await listeErisimi(o, l)) listeler.push(l);
-  const urunIdleri = [...new Set(listeler.flatMap((l) => l.satirlar.map((s) => s.urunId)))];
-  const urunler = await r.urunler(urunIdleri);
-  return NextResponse.json({ okulId, okullar, secenekler, listeler, urunler });
+  const kalemler = await kalemleriGetir(listeler.flatMap((l) => l.satirlar));
+  return NextResponse.json({ okulId, okullar, secenekler, listeler, kalemler });
 }
 
 const Yeni = z.object({

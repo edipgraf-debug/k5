@@ -11,6 +11,7 @@ import OkulSayfasiAyar from '@/components/panel/OkulSayfasiAyar';
 import { Bolum, Bos, Rozet, Sayfa, SayfaBasligi, TABLO } from '@/components/panel/Ortak';
 import Sekmeler from '@/components/yonetim/Sekmeler';
 import OkulFormu from '@/components/yonetim/OkulFormu';
+import { plasiyerSecenekleri } from '@/lib/yonetim';
 import SinifYonetimi from '@/components/yonetim/SinifYonetimi';
 import IslemGecmisi from '@/components/yonetim/IslemGecmisi';
 import { TIP_ADI, telGoster } from '@/components/yonetim/etiketler';
@@ -55,7 +56,7 @@ export default async function YonetimOkul({ params, searchParams }: { params: Pr
         {sekme === 'ozet' && <OkulPaneli veri={await panelVerisi(o, id, null)} rolOnek="/yonetim" okulId={id} />}
         {sekme === 'bilgiler' && (
           <div className="flex flex-wrap items-start gap-6">
-            <div className="min-w-0 flex-[999_1_560px]"><OkulFormu okul={kayit} /></div>
+            <div className="min-w-0 flex-[999_1_560px]"><OkulFormu okul={kayit} plasiyerler={await plasiyerSecenekleri()} /></div>
             <div className="min-w-0 flex-[1_1_300px]"><IslemGecmisi islemler={await y.islemler('Okul', id)} /></div>
           </div>
         )}

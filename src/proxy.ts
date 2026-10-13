@@ -12,12 +12,15 @@ const ALANLAR: { onek: string; roller: Rol[] }[] = [
   { onek: '/ogretmen', roller: ['ogretmen'] },
   { onek: '/okul', roller: ['okul'] },
   { onek: '/yonetim', roller: ['yonetim'] },
+  { onek: '/plasiyer', roller: ['plasiyer'] },
+  { onek: '/api/plasiyer', roller: ['plasiyer'] },
   { onek: '/api/veli', roller: ['veli'] },
   { onek: '/api/listeler', roller: ['ogretmen', 'okul', 'yonetim'] },
   { onek: '/api/katalog', roller: ['ogretmen', 'okul', 'yonetim'] },
   { onek: '/api/yonetim', roller: ['yonetim'] },
 ];
-const ACIK = ['/giris', '/yonetim/giris', '/yasal', '/api/auth', '/api/okul-logo', '/api/saglik'];
+// Kurumsal sayfalar (/sayfa/...), WhatsApp destek (/destek) ve ürün kapakları herkese açık
+const ACIK = ['/giris', '/yonetim/giris', '/yasal', '/sayfa', '/destek', '/api/auth', '/api/okul-logo', '/api/saglik', '/api/kapak'];
 
 /** "/ornek-ortaokulu" gibi tek parçalı, ayrılmış olmayan adres */
 function okulAdresi(pathname: string): boolean {
@@ -37,7 +40,7 @@ export async function proxy(req: NextRequest) {
     if (api) return NextResponse.json({ hata: 'Oturum gerekli' }, { status: 401 });
     // Okula özel adresten gelen kullanıcı, oturumu düşünce yine okulunun giriş sayfasına döner
     const okul = req.cookies.get(OKUL_CEREZI)?.value;
-    const hedef = pathname.startsWith('/yonetim') ? '/yonetim/giris' : okul && slugGecerli(okul) ? `/${okul}` : '/giris';
+    const hedef = pathname.startsWith('/yonetim') || pathname.startsWith('/plasiyer') ? '/yonetim/giris' : okul && slugGecerli(okul) ? `/${okul}` : '/giris';
     return NextResponse.redirect(new URL(hedef, req.url));
   }
 

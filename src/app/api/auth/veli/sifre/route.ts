@@ -1,8 +1,9 @@
 import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { repo } from '@/lib/data/repo';
-import { govde, hata, oturumAc } from '@/lib/api';
-import { sifreHashle, sifreKuraliHatasi } from '@/lib/auth';
+import { govde, hata, istemciIp, oturumAc } from '@/lib/api';
+import { sifreHashle, sifreKuraliHatasi, telefonMaskele } from '@/lib/auth';
+import { ticaretRepo } from '@/lib/data/ticaret';
 import { DOGRULAMA_CEREZI, dogrulamaCoz } from '@/lib/session';
 
 const Sema = z.object({
@@ -35,6 +36,10 @@ export async function POST(req: Request) {
     kilitBitis: null,
     sonGiris: new Date(),
   });
+  try {
+    await (await ticaretRepo()).girisYaz({ tip: 'Veli', veliId: veli.id, kimlik: telefonMaskele(veli.telefon), rol: 'veli', basarili: true,
+      sebep: 'SMS ile şifre belirledi', ip: istemciIp(req) ?? null, tarayici: req.headers.get('user-agent') });
+  } catch { /* yok say */ }
   const res = await oturumAc({ sub: veli.id, rol: 'veli', ad: g.veri.adSoyad || veli.adSoyad || 'Veli' });
   res.cookies.delete(DOGRULAMA_CEREZI);
   return res;

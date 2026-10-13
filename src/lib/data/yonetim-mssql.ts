@@ -4,7 +4,7 @@ import { AKTIF_SEZON, havuz, q, type Param } from './mssql';
 import { katla, sqlKatla } from '../katla';
 import {
   KayitHatasi, sinifAdi,
-  type AramaFiltresi, type HedefTip, type IslemKaydi, type OgrenciGirdi, type OgrenciKaydi, type OkulGirdi, type OkulKaydi,
+  type AramaFiltresi, type HedefTip, type IslemKaydi, type IslemLogFiltresi, type IslemLogSatiri, type PlasiyerOzeti, type OgrenciGirdi, type OgrenciKaydi, type OkulGirdi, type OkulKaydi,
   type PersonelGirdi, type PersonelKaydi, type PersonelTipi, type SinifKaydi, type VeliKaydi, type YonetimRepo,
 } from './yonetim';
 import type { PartiDurum, YuklemeParti, YuklemeSatiri } from '../yukleme/tipler';
@@ -27,15 +27,16 @@ async function benzersiz<T>(f: () => Promise<T>, mesajlar: Record<string, string
 const ids = (l: number[]) => l.join(',') || '0';
 
 interface OkulDb { Id: number; Kod: string; Ad: string; Il: string; Ilce: string; Adres: string | null; Telefon: string | null; Eposta: string | null;
-  OpakCariKodu: string | null; OpakWebCariKodu: string | null; AktifMi: boolean; Slug: string | null }
+  OpakCariKodu: string | null; OpakWebCariKodu: string | null; AktifMi: boolean; Slug: string | null; PlasiyerId: number | null; PlasiyerAd: string | null }
 const okulMap = (o: OkulDb): OkulKaydi => ({ id: o.Id, kod: o.Kod, ad: o.Ad, il: o.Il, ilce: o.Ilce, adres: o.Adres, telefon: o.Telefon, eposta: o.Eposta,
-  opakCariKodu: o.OpakCariKodu, opakWebCariKodu: o.OpakWebCariKodu, aktif: !!o.AktifMi, slug: o.Slug });
-const OKUL_SEC = `SELECT Id, Kod, Ad, Il, Ilce, Adres, Telefon, Eposta, OpakCariKodu, OpakWebCariKodu, AktifMi, Slug FROM dbo.Okul`;
+  opakCariKodu: o.OpakCariKodu, opakWebCariKodu: o.OpakWebCariKodu, aktif: !!o.AktifMi, slug: o.Slug, plasiyerId: o.PlasiyerId, plasiyerAd: o.PlasiyerAd });
+const OKUL_SEC = `SELECT ok.Id, ok.Kod, ok.Ad, ok.Il, ok.Ilce, ok.Adres, ok.Telefon, ok.Eposta, ok.OpakCariKodu, ok.OpakWebCariKodu, ok.AktifMi, ok.Slug,
+  ok.PlasiyerId, pl.AdSoyad AS PlasiyerAd FROM dbo.Okul ok LEFT JOIN dbo.Kullanici pl ON pl.Id = ok.PlasiyerId`;
 
 const okulParam = (o: OkulGirdi): Param[] => [
   ['kod', sql.VarChar(20), o.kod], ['ad', sql.NVarChar(200), o.ad], ['il', sql.NVarChar(50), o.il], ['ilce', sql.NVarChar(50), o.ilce],
   ['adres', sql.NVarChar(500), o.adres], ['tel', sql.VarChar(10), o.telefon], ['ep', sql.NVarChar(150), o.eposta],
-  ['oc', sql.NVarChar(30), o.opakCariKodu], ['ow', sql.NVarChar(30), o.opakWebCariKodu], ['ak', sql.Bit, o.aktif]];
+  ['oc', sql.NVarChar(30), o.opakCariKodu], ['ow', sql.NVarChar(30), o.opakWebCariKodu], ['ak', sql.Bit, o.aktif], ['pl', sql.Int, o.plasiyerId]];
 const OKUL_HATA = { UQ_Okul_Kod: 'Bu okul kodu başka bir okulda kullanılıyor', UX_Okul_OpakCari: 'Bu Opak cari kodu başka bir okulda kullanılıyor',
   UX_Okul_OpakWebCari: 'Bu web cari kodu başka bir okulda kullanılıyor' };
 
@@ -43,27 +44,38 @@ interface VeliDb { Id: number; Telefon: string; AdSoyad: string | null; Eposta: 
   KilitBitisTarihi: Date | null; SonGirisTarihi: Date | null; AktifMi: boolean }
 
 interface PersonelDb { Id: number; Tip: PersonelTipi; OkulId: number | null; OkulAd: string | null; AdSoyad: string; Eposta: string; Telefon: string | null;
-  AktifMi: boolean; KilitBitisTarihi: Date | null; SifreDegistirmeliMi: boolean; SonGirisTarihi: Date | null; Yetkiler: string | null }
+  AktifMi: boolean; KilitBitisTarihi: Date | null; SifreDegistirmeliMi: boolean; SonGirisTarihi: Date | null; Yetkiler: string | null;
+  OpakPlasiyerKodu: string | null; PlasiyerId: number | null; GecerliPlasiyerId: number | null; GecerliPlasiyerAd: string | null }
 
+/** Öğretmenin geçerli plasiyeri: kendisine atanan, yoksa okulun plasiyeri (okul yetkilisi: okulun plasiyeri) */
+const GECERLI_PLASIYER = `CASE WHEN k.Tip = 'Ogretmen' AND k.PlasiyerId IS NOT NULL THEN k.PlasiyerId WHEN k.Tip IN ('Ogretmen', 'Okul') THEN ok.PlasiyerId END`;
+
+const PERSONEL_HATA = { UQ_Kullanici_Eposta: 'Bu e-posta başka bir kullanıcıya kayıtlı', UX_Kullanici_OpakPlasiyer: 'Bu Opak plasiyer kodu başka bir plasiyerde kullanılıyor' };
 const kilitli = (t: Date | null) => !!t && new Date(t).getTime() > Date.now();
 
 export class MssqlYonetimRepo implements YonetimRepo {
   // ---- okul
-  async okulKaydi(id: number) { const r = await q<OkulDb>(`${OKUL_SEC} WHERE Id = @id`, [['id', sql.Int, id]]); return r[0] ? okulMap(r[0]) : null; }
-  async okulListesi(pasifDahil = false) { return (await q<OkulDb>(`${OKUL_SEC} WHERE @p = 1 OR AktifMi = 1 ORDER BY Kod`, [['p', sql.Bit, pasifDahil]])).map(okulMap); }
+  async okulKaydi(id: number) { const r = await q<OkulDb>(`${OKUL_SEC} WHERE ok.Id = @id`, [['id', sql.Int, id]]); return r[0] ? okulMap(r[0]) : null; }
+  async okulListesi(pasifDahil = false, plasiyerId?: number | null) {
+    return (await q<OkulDb>(`${OKUL_SEC} WHERE (@p = 1 OR ok.AktifMi = 1) AND (@pl IS NULL OR ok.PlasiyerId = @pl) ORDER BY ok.Kod`,
+      [['p', sql.Bit, pasifDahil], ['pl', sql.Int, plasiyerId ?? null]])).map(okulMap);
+  }
+  async okulPlasiyerAta(okulId: number, plasiyerId: number | null) {
+    await q(`UPDATE dbo.Okul SET PlasiyerId = @pl, GuncellemeTarihi = SYSDATETIME() WHERE Id = @id`, [['id', sql.Int, okulId], ['pl', sql.Int, plasiyerId]]);
+  }
   async okulKodOner() {
     const r = await q<{ N: number | null }>(`SELECT MAX(TRY_CAST(SUBSTRING(Kod, 4, 20) AS INT)) AS N FROM dbo.Okul WHERE Kod LIKE 'OK-%'`);
     return `OK-${Math.max(1000, r[0]?.N ?? 0) + 1}`;
   }
   async okulEkle(o: OkulGirdi) {
     const r = await benzersiz(() => q<{ Id: number }>(
-      `INSERT INTO dbo.Okul (Kod, Ad, Il, Ilce, Adres, Telefon, Eposta, OpakCariKodu, OpakWebCariKodu, AktifMi) OUTPUT inserted.Id
-       VALUES (@kod, @ad, @il, @ilce, @adres, @tel, @ep, @oc, @ow, @ak)`, okulParam(o)), OKUL_HATA);
+      `INSERT INTO dbo.Okul (Kod, Ad, Il, Ilce, Adres, Telefon, Eposta, OpakCariKodu, OpakWebCariKodu, AktifMi, PlasiyerId) OUTPUT inserted.Id
+       VALUES (@kod, @ad, @il, @ilce, @adres, @tel, @ep, @oc, @ow, @ak, @pl)`, okulParam(o)), OKUL_HATA);
     return r[0].Id;
   }
   async okulGuncelle(id: number, o: OkulGirdi) {
     await benzersiz(() => q(`UPDATE dbo.Okul SET Kod = @kod, Ad = @ad, Il = @il, Ilce = @ilce, Adres = @adres, Telefon = @tel, Eposta = @ep,
-      OpakCariKodu = @oc, OpakWebCariKodu = @ow, AktifMi = @ak, GuncellemeTarihi = SYSDATETIME() WHERE Id = @id`, [...okulParam(o), ['id', sql.Int, id]]), OKUL_HATA);
+      OpakCariKodu = @oc, OpakWebCariKodu = @ow, AktifMi = @ak, PlasiyerId = @pl, GuncellemeTarihi = SYSDATETIME() WHERE Id = @id`, [...okulParam(o), ['id', sql.Int, id]]), OKUL_HATA);
   }
 
   // ---- sınıf / şube
@@ -137,13 +149,13 @@ export class MssqlYonetimRepo implements YonetimRepo {
     return m;
   }
 
-  private async ogrenciSorgu(where: string, params: Param[], limit: number, veliler: boolean): Promise<OgrenciKaydi[]> {
+  private async ogrenciSorgu(where: string, params: Param[], limit: number, veliler: boolean, sira = 'o.Ad, o.Soyad'): Promise<OgrenciKaydi[]> {
     const r = await q<{ Id: number; OkulId: number; OkulAd: string; OkulNo: string; Ad: string; Soyad: string; SubeId: number | null; Seviye: number | null; SubeAd: string | null; AktifMi: boolean }>(
       `SELECT TOP (@lim) o.Id, o.OkulId, ok.Ad AS OkulAd, o.OkulNo, o.Ad, o.Soyad, sb.Id AS SubeId, sn.Seviye, sb.Ad AS SubeAd, o.AktifMi
        FROM dbo.Ogrenci o JOIN dbo.Okul ok ON ok.Id = o.OkulId
        LEFT JOIN dbo.OgrenciSezon os ON os.OgrenciId = o.Id AND os.SezonId = ${AKTIF_SEZON}
        LEFT JOIN dbo.Sube sb ON sb.Id = os.SubeId LEFT JOIN dbo.Sinif sn ON sn.Id = sb.SinifId
-       WHERE ${where} ORDER BY o.Ad, o.Soyad`, [...params, ['lim', sql.Int, limit]]);
+       WHERE ${where} ORDER BY ${sira}`, [...params, ['lim', sql.Int, limit]]);
     const vm = veliler ? await this.velilerOf(r.map((x) => x.Id)) : new Map();
     return r.map((x) => ({ id: x.Id, okulId: x.OkulId, okulAd: x.OkulAd, okulNo: x.OkulNo, ad: x.Ad, soyad: x.Soyad, subeId: x.SubeId,
       sinifSube: x.SubeId ? `${x.Seviye}-${x.SubeAd}` : null, aktif: !!x.AktifMi, veliler: vm.get(x.Id) ?? [] }));
@@ -152,10 +164,13 @@ export class MssqlYonetimRepo implements YonetimRepo {
     const qs = (f.q ?? '').trim();
     const rakam = qs.replace(/\D/g, '').replace(/^0/, '');
     return this.ogrenciSorgu(`(@pasif = 1 OR o.AktifMi = 1) AND (@okul IS NULL OR o.OkulId = @okul) AND (@sube IS NULL OR os.SubeId = @sube)
+      AND (@sev IS NULL OR sn.Seviye = @sev) AND (@okullar IS NULL OR o.OkulId IN (SELECT CAST(value AS INT) FROM STRING_SPLIT(@okullar, ',')))
       AND (@q = '' OR ${sqlKatla("CONCAT(o.Ad, ' ', o.Soyad)")} LIKE @l OR o.OkulNo = @q
            OR (LEN(@tel) >= 4 AND EXISTS (SELECT 1 FROM dbo.VeliOgrenci vo JOIN dbo.Veli v ON v.Id = vo.VeliId WHERE vo.OgrenciId = o.Id AND v.Telefon LIKE @tl)))`,
       [['pasif', sql.Bit, !!f.pasifDahil], ['okul', sql.Int, f.okulId ?? null], ['sube', sql.Int, f.subeId ?? null], ['q', sql.NVarChar(100), qs],
-       ['l', sql.NVarChar(110), `%${katla(qs)}%`], ['tel', sql.VarChar(10), rakam], ['tl', sql.VarChar(12), `%${rakam}%`]], f.limit ?? 100, true);
+       ['sev', sql.TinyInt, f.seviye ?? null], ['okullar', sql.NVarChar(sql.MAX), f.okulIdleri ? ids(f.okulIdleri) : null],
+       ['l', sql.NVarChar(110), `%${katla(qs)}%`], ['tel', sql.VarChar(10), rakam], ['tl', sql.VarChar(12), `%${rakam}%`]], f.limit ?? 100, true,
+      f.seviye != null || f.subeId ? 'o.OkulId, sn.Seviye, sb.Ad, o.Ad, o.Soyad' : undefined);
   }
   async ogrenciKaydi(id: number) { return (await this.ogrenciSorgu('o.Id = @id', [['id', sql.Int, id]], 1, true))[0] ?? null; }
 
@@ -238,23 +253,49 @@ export class MssqlYonetimRepo implements YonetimRepo {
   // ---- kullanıcılar
   private async personelSorgu(where: string, p: Param[]): Promise<PersonelKaydi[]> {
     const r = await q<PersonelDb>(
-      `SELECT k.Id, k.Tip, k.OkulId, ok.Ad AS OkulAd, k.AdSoyad, k.Eposta, k.Telefon, k.AktifMi, k.KilitBitisTarihi, k.SifreDegistirmeliMi, k.SonGirisTarihi,
-              (SELECT STRING_AGG(y.Yetki, ',') FROM dbo.KullaniciYetki y WHERE y.KullaniciId = k.Id) AS Yetkiler
-       FROM dbo.Kullanici k LEFT JOIN dbo.Okul ok ON ok.Id = k.OkulId WHERE ${where} ORDER BY k.AdSoyad`, p);
+      `SELECT * FROM (
+         SELECT k.Id, k.Tip, k.OkulId, ok.Ad AS OkulAd, k.AdSoyad, k.Eposta, k.Telefon, k.AktifMi, k.KilitBitisTarihi, k.SifreDegistirmeliMi, k.SonGirisTarihi,
+                k.OpakPlasiyerKodu, k.PlasiyerId, ${GECERLI_PLASIYER} AS GecerliPlasiyerId,
+                (SELECT STRING_AGG(y.Yetki, ',') FROM dbo.KullaniciYetki y WHERE y.KullaniciId = k.Id) AS Yetkiler
+         FROM dbo.Kullanici k LEFT JOIN dbo.Okul ok ON ok.Id = k.OkulId
+       ) k OUTER APPLY (SELECT AdSoyad AS GecerliPlasiyerAd FROM dbo.Kullanici WHERE Id = k.GecerliPlasiyerId) gp
+       WHERE ${where} ORDER BY k.AdSoyad`, p);
     const sb = r.length ? await q<{ KullaniciId: number; SubeId: number; Ad: string }>(
       `SELECT DISTINCT os.KullaniciId, os.SubeId, CONCAT(sn.Seviye, '-', s.Ad) AS Ad FROM dbo.OgretmenSube os
        JOIN dbo.Sube s ON s.Id = os.SubeId JOIN dbo.Sinif sn ON sn.Id = s.SinifId
        WHERE os.KullaniciId IN (SELECT CAST(value AS INT) FROM STRING_SPLIT(@ids, ','))`, [['ids', sql.NVarChar(sql.MAX), ids(r.map((x) => x.Id))]]) : [];
     return r.map((k) => ({ id: k.Id, tip: k.Tip, okulId: k.OkulId, okulAd: k.OkulAd, adSoyad: k.AdSoyad, eposta: k.Eposta, telefon: k.Telefon,
       aktif: !!k.AktifMi, kilitli: kilitli(k.KilitBitisTarihi), sifreDegistirmeli: !!k.SifreDegistirmeliMi, sonGiris: k.SonGirisTarihi,
-      yetkiler: k.Yetkiler ? k.Yetkiler.split(',') : [], subeler: sb.filter((s) => s.KullaniciId === k.Id).map((s) => ({ id: s.SubeId, ad: s.Ad })) }));
+      yetkiler: k.Yetkiler ? k.Yetkiler.split(',') : [], subeler: sb.filter((s) => s.KullaniciId === k.Id).map((s) => ({ id: s.SubeId, ad: s.Ad })),
+      opakPlasiyerKodu: k.OpakPlasiyerKodu, plasiyerId: k.PlasiyerId, gecerliPlasiyerId: k.GecerliPlasiyerId, gecerliPlasiyerAd: k.GecerliPlasiyerAd }));
   }
-  async personelListesi(f: { q?: string; tip?: PersonelTipi | null; okulId?: number | null; pasifDahil?: boolean }) {
+  async personelListesi(f: { q?: string; tip?: PersonelTipi | null; okulId?: number | null; pasifDahil?: boolean; plasiyerId?: number | null }) {
     const qs = (f.q ?? '').trim();
     return this.personelSorgu(`(@pasif = 1 OR k.AktifMi = 1) AND (@tip IS NULL OR k.Tip = @tip) AND (@okul IS NULL OR k.OkulId = @okul)
-      AND (@q = '' OR ${sqlKatla('k.AdSoyad')} LIKE @l OR ${sqlKatla('k.Eposta')} LIKE @l OR k.Telefon LIKE @l)`, [
-      ['pasif', sql.Bit, !!f.pasifDahil], ['tip', sql.VarChar(10), f.tip ?? null], ['okul', sql.Int, f.okulId ?? null],
+      AND (@pl IS NULL OR k.GecerliPlasiyerId = @pl)
+      AND (@q = '' OR ${sqlKatla('k.AdSoyad')} LIKE @l OR ${sqlKatla('k.Eposta')} LIKE @l OR k.Telefon LIKE @l OR k.OpakPlasiyerKodu LIKE @l)`, [
+      ['pasif', sql.Bit, !!f.pasifDahil], ['tip', sql.VarChar(10), f.tip ?? null], ['okul', sql.Int, f.okulId ?? null], ['pl', sql.Int, f.plasiyerId ?? null],
       ['q', sql.NVarChar(150), qs], ['l', sql.NVarChar(160), `%${katla(qs)}%`]]);
+  }
+  async plasiyerListesi(pasifDahil = false): Promise<PlasiyerOzeti[]> {
+    const r = await q<{ Id: number; AdSoyad: string; Eposta: string; Telefon: string | null; OpakPlasiyerKodu: string | null; AktifMi: boolean;
+      OkulSayisi: number; OgretmenSayisi: number; OzelOgretmen: number }>(
+      `SELECT p.Id, p.AdSoyad, p.Eposta, p.Telefon, p.OpakPlasiyerKodu, p.AktifMi,
+              (SELECT COUNT(*) FROM dbo.Okul o WHERE o.PlasiyerId = p.Id AND o.AktifMi = 1) AS OkulSayisi,
+              (SELECT COUNT(*) FROM dbo.Kullanici k JOIN dbo.Okul ok ON ok.Id = k.OkulId
+                WHERE k.Tip = 'Ogretmen' AND k.AktifMi = 1 AND ISNULL(k.PlasiyerId, ok.PlasiyerId) = p.Id) AS OgretmenSayisi,
+              (SELECT COUNT(*) FROM dbo.Kullanici k WHERE k.Tip = 'Ogretmen' AND k.AktifMi = 1 AND k.PlasiyerId = p.Id) AS OzelOgretmen
+       FROM dbo.Kullanici p WHERE p.Tip = 'Plasiyer' AND (@pasif = 1 OR p.AktifMi = 1) ORDER BY p.AdSoyad`, [['pasif', sql.Bit, pasifDahil]]);
+    return r.map((x) => ({ id: x.Id, adSoyad: x.AdSoyad, eposta: x.Eposta, telefon: x.Telefon, opakPlasiyerKodu: x.OpakPlasiyerKodu, aktif: !!x.AktifMi,
+      okulSayisi: x.OkulSayisi, ogretmenSayisi: x.OgretmenSayisi, ozelOgretmen: x.OzelOgretmen }));
+  }
+  async ogretmenPlasiyerAta(kullaniciId: number, plasiyerId: number | null) {
+    await q(`UPDATE dbo.Kullanici SET PlasiyerId = @pl WHERE Id = @id AND Tip = 'Ogretmen'`, [['id', sql.Int, kullaniciId], ['pl', sql.Int, plasiyerId]]);
+  }
+  async seviyeler(okulId?: number | null) {
+    const r = await q<{ Seviye: number }>(`SELECT DISTINCT Seviye FROM dbo.Sinif WHERE SezonId = ${AKTIF_SEZON} AND (@o IS NULL OR OkulId = @o) ORDER BY Seviye`,
+      [['o', sql.Int, okulId ?? null]]);
+    return r.map((x) => x.Seviye);
   }
   async personelKaydi(id: number) { return (await this.personelSorgu('k.Id = @id', [['id', sql.Int, id]]))[0] ?? null; }
 
@@ -269,15 +310,16 @@ export class MssqlYonetimRepo implements YonetimRepo {
   }
   private personelParam(g: PersonelGirdi): Param[] {
     return [['tip', sql.VarChar(10), g.tip], ['okul', sql.Int, g.okulId], ['ad', sql.NVarChar(150), g.adSoyad], ['ep', sql.NVarChar(150), g.eposta],
-      ['tel', sql.VarChar(10), g.telefon], ['ak', sql.Bit, g.aktif]];
+      ['tel', sql.VarChar(10), g.telefon], ['ak', sql.Bit, g.aktif],
+      ['opk', sql.NVarChar(30), g.tip === 'Plasiyer' ? g.opakPlasiyerKodu : null], ['pl', sql.Int, g.tip === 'Ogretmen' ? g.plasiyerId : null]];
   }
   async personelEkle(g: PersonelGirdi, sifreHash: string) {
     const tx = new sql.Transaction(await havuz());
     await tx.begin();
     try {
-      const r = await benzersiz(() => q<{ Id: number }>(`INSERT INTO dbo.Kullanici (Tip, OkulId, AdSoyad, Eposta, Telefon, SifreHash, SifreDegistirmeliMi, AktifMi)
-        OUTPUT inserted.Id VALUES (@tip, @okul, @ad, @ep, @tel, @sh, 1, @ak)`, [...this.personelParam(g), ['sh', sql.VarChar(255), sifreHash]], tx),
-        { UQ_Kullanici_Eposta: 'Bu e-posta başka bir kullanıcıya kayıtlı' });
+      const r = await benzersiz(() => q<{ Id: number }>(`INSERT INTO dbo.Kullanici (Tip, OkulId, AdSoyad, Eposta, Telefon, SifreHash, SifreDegistirmeliMi, AktifMi, OpakPlasiyerKodu, PlasiyerId)
+        OUTPUT inserted.Id VALUES (@tip, @okul, @ad, @ep, @tel, @sh, 1, @ak, @opk, @pl)`, [...this.personelParam(g), ['sh', sql.VarChar(255), sifreHash]], tx),
+        PERSONEL_HATA);
       await this.yetkiVeSubeYaz(r[0].Id, g, tx);
       await tx.commit();
       return r[0].Id;
@@ -287,8 +329,12 @@ export class MssqlYonetimRepo implements YonetimRepo {
     const tx = new sql.Transaction(await havuz());
     await tx.begin();
     try {
-      await benzersiz(() => q(`UPDATE dbo.Kullanici SET Tip = @tip, OkulId = @okul, AdSoyad = @ad, Eposta = @ep, Telefon = @tel, AktifMi = @ak WHERE Id = @id`,
-        [...this.personelParam(g), ['id', sql.Int, id]], tx), { UQ_Kullanici_Eposta: 'Bu e-posta başka bir kullanıcıya kayıtlı' });
+      if (g.tip !== 'Plasiyer') {
+        const bagli = await q<{ N: number }>(`SELECT (SELECT COUNT(*) FROM dbo.Okul WHERE PlasiyerId = @id) + (SELECT COUNT(*) FROM dbo.Kullanici WHERE PlasiyerId = @id) AS N`, [['id', sql.Int, id]], tx);
+        if (bagli[0].N > 0) throw new KayitHatasi('Bu plasiyere bağlı okul / öğretmen var; önce onları başka plasiyere aktarın');
+      }
+      await benzersiz(() => q(`UPDATE dbo.Kullanici SET Tip = @tip, OkulId = @okul, AdSoyad = @ad, Eposta = @ep, Telefon = @tel, AktifMi = @ak,
+        OpakPlasiyerKodu = @opk, PlasiyerId = @pl WHERE Id = @id`, [...this.personelParam(g), ['id', sql.Int, id]], tx), PERSONEL_HATA);
       await this.yetkiVeSubeYaz(id, g, tx);
       await tx.commit();
     } catch (e) { await tx.rollback(); throw e; }
@@ -394,6 +440,17 @@ export class MssqlYonetimRepo implements YonetimRepo {
   async islemYaz(kullaniciId: number, hedef: HedefTip, hedefId: number, islem: string, ayrinti?: string | null) {
     await q(`INSERT INTO dbo.YonetimIslem (KullaniciId, HedefTip, HedefId, Islem, Ayrinti) VALUES (@k, @h, @hi, @i, @a)`, [
       ['k', sql.Int, kullaniciId], ['h', sql.VarChar(20), hedef], ['hi', sql.Int, hedefId], ['i', sql.NVarChar(100), islem], ['a', sql.NVarChar(500), ayrinti?.slice(0, 500) ?? null]]);
+  }
+  async islemLog(f: IslemLogFiltresi): Promise<IslemLogSatiri[]> {
+    const qs = (f.q ?? '').trim();
+    const r = await q<{ Id: number; Kullanici: string; HedefTip: string; HedefId: number; Islem: string; Ayrinti: string | null; Tarih: Date }>(
+      `SELECT TOP (@lim) i.Id, k.AdSoyad AS Kullanici, i.HedefTip, i.HedefId, i.Islem, i.Ayrinti, i.Tarih
+       FROM dbo.YonetimIslem i JOIN dbo.Kullanici k ON k.Id = i.KullaniciId
+       WHERE (@h IS NULL OR i.HedefTip = @h) AND (@b IS NULL OR i.Tarih >= @b) AND (@s IS NULL OR i.Tarih <= @s)
+         AND (@q = '' OR ${sqlKatla('k.AdSoyad')} LIKE @l OR ${sqlKatla('i.Islem')} LIKE @l OR ${sqlKatla("ISNULL(i.Ayrinti, '')")} LIKE @l)
+       ORDER BY i.Id DESC`, [['lim', sql.Int, f.limit ?? 200], ['h', sql.VarChar(20), f.hedef ?? null], ['b', sql.DateTime2(0), f.baslangic ?? null],
+        ['s', sql.DateTime2(0), f.bitis ?? null], ['q', sql.NVarChar(100), qs], ['l', sql.NVarChar(110), `%${katla(qs)}%`]]);
+    return r.map((x) => ({ id: Number(x.Id), kullanici: x.Kullanici, hedef: x.HedefTip, hedefId: x.HedefId, islem: x.Islem, ayrinti: x.Ayrinti, tarih: x.Tarih }));
   }
   async islemler(hedef: HedefTip, hedefId: number, limit = 20): Promise<IslemKaydi[]> {
     const r = await q<{ Id: number; Kullanici: string; Islem: string; Ayrinti: string | null; Tarih: Date }>(

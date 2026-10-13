@@ -1,6 +1,9 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
+
+// Açık mesaj verilmemiş doğrulama hataları da Türkçe dönsün
+z.config(z.locales.tr());
 import { OTURUM_CEREZI, OTURUM_MAX_AGE, cerezAyarlari, oturumImzala, anaSayfa } from './session';
 import type { Oturum } from './types';
 

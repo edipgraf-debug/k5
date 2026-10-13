@@ -2,26 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import StokRozeti from '@/components/StokRozeti';
 
-export interface VeliSatir { listeId: number; listeAd: string; urunId: number; ad: string; yayinevi: string; barkod: string; fiyat: number; zorunlu: boolean }
+export interface VeliSatir { listeId: number; listeAd: string; anahtar: string; tur: 'urun' | 'set'; ad: string; yayinevi: string; barkod: string; fiyat: number; adet: number;
+  zorunlu: boolean; icerik: string | null; stok: number | null; eskiFiyat: number | null }
 export interface OgrenciGorunumu { id: number; ad: string; okul: string; sinif: string; no: string; satirlar: VeliSatir[] }
 
 const tl = (n: number) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
 const kucuk = (s: string) => s.toLocaleLowerCase('tr');
-const SEPET_ANAHTARI = 'ko_sepet_secimleri';
 
-export default function VeliListe({ ogrenciler, veliAd }: { ogrenciler: OgrenciGorunumu[]; veliAd: string }) {
+export default function VeliListe({ ogrenciler, veliAd, secimler }: { ogrenciler: OgrenciGorunumu[]; veliAd: string; secimler: Record<number, string[]> }) {
   const [secili, setSecili] = useState(ogrenciler[0]?.id ?? 0);
   const [arama, setArama] = useState('');
-  // isteğe bağlı ürün seçimleri: { ogrenciId: [urunId, ...] }
-  const [istege, setIstege] = useState<Record<number, number[]>>({});
-
-  useEffect(() => {
-    try { const k = localStorage.getItem(SEPET_ANAHTARI); if (k) setIstege(JSON.parse(k)); } catch { /* tarayıcı depolaması yok */ }
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem(SEPET_ANAHTARI, JSON.stringify(istege)); } catch { /* yok say */ }
-  }, [istege]);
+  // isteğe bağlı kalem seçimleri: { ogrenciId: ["u12", "s3", ...] }
+  // başlangıç: sunucudaki sepet (başka cihazda ya da katalogda yapılan seçimler dahil)
+  const [istege, setIstege] = useState<Record<number, string[]>>(secimler);
 
   // velinin sepeti açtığını kaydet (öğretmen / okul sepet takibinde "veli açtı")
   useEffect(() => {
@@ -36,14 +31,19 @@ export default function VeliListe({ ogrenciler, veliAd }: { ogrenciler: OgrenciG
     const q = kucuk(arama.trim());
     return q ? satirlar.filter((s) => kucuk(`${s.ad} ${s.yayinevi} ${s.barkod}`).includes(q)) : satirlar;
   }, [satirlar, arama]);
-  const sepette = satirlar.filter((s) => s.zorunlu || secilenler.includes(s.urunId));
-  const toplam = sepette.reduce((a, s) => a + s.fiyat, 0);
+  const sepette = satirlar.filter((s) => s.zorunlu || secilenler.includes(s.anahtar));
+  const toplam = sepette.reduce((a, s) => a + s.fiyat * s.adet, 0);
 
-  function degistir(urunId: number) {
-    setIstege((m) => {
-      const l = m[secili] ?? [];
-      return { ...m, [secili]: l.includes(urunId) ? l.filter((x) => x !== urunId) : [...l, urunId] };
-    });
+  /** Sepeti sunucuya da yaz (terk edilen sepet raporu); fiyatlar sunucuda yeniden hesaplanır. */
+  function sunucuyaYaz(ogrenciId: number, secimler: string[]) {
+    fetch('/api/veli/sepet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ogrenciId, secimler }) }).catch(() => undefined);
+  }
+
+  function degistir(anahtar: string) {
+    const l = istege[secili] ?? [];
+    const yeni = l.includes(anahtar) ? l.filter((x) => x !== anahtar) : [...l, anahtar];
+    setIstege((m) => ({ ...m, [secili]: yeni }));
+    sunucuyaYaz(secili, yeni);
   }
 
   if (!ogrenciler.length) {
@@ -94,22 +94,27 @@ export default function VeliListe({ ogrenciler, veliAd }: { ogrenciler: OgrenciG
           </div>
 
           {gorunen.map((s) => {
-            const sepetteMi = s.zorunlu || secilenler.includes(s.urunId);
+            const sepetteMi = s.zorunlu || secilenler.includes(s.anahtar);
             return (
-              <div key={`${s.listeId}-${s.urunId}`} className="flex flex-wrap items-center gap-4 border-b border-[#EEF0F3] px-6 py-4">
-                <div aria-hidden="true" className="flex h-[76px] w-14 flex-none items-center justify-center rounded-md bg-[#E9ECF1]">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9AA3B0" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14Z" /><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5" /></svg>
+              <div key={`${s.listeId}-${s.anahtar}`} className="flex flex-wrap items-center gap-4 border-b border-[#EEF0F3] px-6 py-4">
+                <div aria-hidden="true" className={`flex h-[76px] w-14 flex-none items-center justify-center rounded-md ${s.tur === 'set' ? 'bg-lacivert font-baslik text-xs font-extrabold text-turuncu' : 'bg-[#E9ECF1]'}`}>
+                  {s.tur === 'set' ? 'SET' : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9AA3B0" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14Z" /><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5" /></svg>}
                 </div>
                 <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1">
                   <span className="font-baslik text-base font-bold">{s.ad}</span>
-                  <span className="text-sm text-metin-2">{s.yayinevi}{s.barkod ? ` · Barkod ${s.barkod}` : ''}</span>
+                  <span className="text-sm text-metin-2">{s.yayinevi}{s.barkod ? ` · Barkod ${s.barkod}` : ''}{s.adet > 1 ? ` · ${s.adet} adet` : ''}</span>
+                  {s.icerik && <span className="text-[13px] text-metin-3">Set içeriği: {s.icerik}</span>}
+                  <StokRozeti stok={s.stok} kucuk />
                   <span className={`self-start rounded-md px-2 py-0.5 text-xs font-bold ${s.zorunlu ? 'bg-[#EEF0F3] text-metin-2' : 'bg-[#FBEBDD] text-[#8A4413]'}`}>{s.zorunlu ? 'Zorunlu' : 'İsteğe bağlı'}</span>
                 </div>
-                <span className="min-w-24 text-right font-baslik text-[17px] font-bold">{tl(s.fiyat)}</span>
+                <span className="flex min-w-24 flex-col items-end">
+                  {s.eskiFiyat != null && <span className="text-[13px] text-metin-3 line-through">{tl(s.eskiFiyat * s.adet)}</span>}
+                  <span className="font-baslik text-[17px] font-bold">{tl(s.fiyat * s.adet)}</span>
+                </span>
                 {s.zorunlu ? (
                   <span className="inline-flex min-h-11 min-w-28 items-center justify-center gap-1.5 text-sm font-bold text-yesil">✓ Listede</span>
                 ) : (
-                  <button type="button" aria-pressed={sepetteMi} onClick={() => degistir(s.urunId)}
+                  <button type="button" aria-pressed={sepetteMi} onClick={() => degistir(s.anahtar)}
                     className={`min-h-11 min-w-28 cursor-pointer rounded-[10px] border-2 border-lacivert font-baslik text-sm font-bold ${sepetteMi ? 'bg-white text-lacivert' : 'bg-lacivert text-white'}`}>
                     {sepetteMi ? 'Çıkar' : 'Ekle'}
                   </button>
@@ -126,13 +131,13 @@ export default function VeliListe({ ogrenciler, veliAd }: { ogrenciler: OgrenciG
 
         <aside aria-label="Sipariş özeti" className="kart flex min-w-0 flex-[1_1_320px] flex-col gap-4 p-6">
           <h2 className="font-baslik text-xl font-extrabold">Sipariş özeti</h2>
-          <div className="flex justify-between gap-3 text-[15px]"><span className="text-metin-2">Kitaplar ({sepette.length} adet)</span><span className="font-bold">{tl(toplam)}</span></div>
+          <div className="flex justify-between gap-3 text-[15px]"><span className="text-metin-2">Kitaplar ({sepette.reduce((a, s) => a + s.adet, 0)} adet)</span><span className="font-bold">{tl(toplam)}</span></div>
           <div className="flex justify-between gap-3 text-[15px]"><span className="text-metin-2">Moto kurye</span><span className="font-bold">Adrese göre</span></div>
           <div className="flex items-baseline justify-between gap-3 border-t border-[#EEF0F3] pt-3.5">
             <span className="font-bold">Toplam (KDV dahil)</span>
             <span className="font-baslik text-[26px] font-extrabold">{tl(toplam)}</span>
           </div>
-          <Link href={`/veli/sepet?ogrenci=${secili}`} aria-disabled={!sepette.length} className={`btn-turuncu ${!sepette.length ? 'pointer-events-none opacity-60' : ''}`}>Sepete git ve tamamla</Link>
+          <Link href={`/veli/sepet?ogrenci=${secili}`} onClick={() => sunucuyaYaz(secili, secilenler)} aria-disabled={!sepette.length} className={`btn-turuncu ${!sepette.length ? 'pointer-events-none opacity-60' : ''}`}>Sepete git ve tamamla</Link>
           <span className="text-[13px] leading-relaxed text-metin-3">Faturanız sizin adınıza e-Arşiv olarak kesilir ve e-posta adresinize gönderilir.</span>
         </aside>
       </div>

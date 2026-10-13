@@ -29,7 +29,7 @@ export async function oturumCoz(token: string | undefined): Promise<Oturum | nul
   try {
     const { payload } = await jwtVerify(token, anahtar(), { algorithms: ['HS256'] });
     const rol = payload.rol as Rol;
-    if (!['veli', 'ogretmen', 'okul', 'yonetim'].includes(rol)) return null;
+    if (!['veli', 'ogretmen', 'okul', 'yonetim', 'plasiyer'].includes(rol)) return null;
     return {
       sub: Number(payload.sub),
       rol,
@@ -80,5 +80,6 @@ export function anaSayfa(rol: Rol): string {
     case 'ogretmen': return '/ogretmen';
     case 'okul': return '/okul';
     case 'yonetim': return '/yonetim';
+    case 'plasiyer': return '/plasiyer';
   }
 }

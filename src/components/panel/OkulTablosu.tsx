@@ -3,16 +3,17 @@ import type { OkulBilgi } from '@/lib/types';
 import { Rozet, TABLO } from './Ortak';
 import KopyalaButonu from './KopyalaButonu';
 
-export interface OkulTabloSatiri extends OkulBilgi { ogrenci: number; yayinda: number }
+export interface OkulTabloSatiri extends OkulBilgi { ogrenci: number; yayinda: number; plasiyerAd?: string | null }
 
 /** Kardelen: okullar, giriş adresleri ve logo durumu */
 export default function OkulTablosu({ okullar, site }: { okullar: OkulTabloSatiri[]; site: string }) {
   const alan = site.replace(/^https?:\/\//, '');
   return (
     <div className={TABLO.sar}>
-      <table className={`${TABLO.tablo} min-w-[860px]`}>
+      <table className={`${TABLO.tablo} min-w-[980px]`}>
         <thead><tr>
           <th scope="col" className={TABLO.th}>Okul</th>
+          <th scope="col" className={TABLO.th}>Plasiyer</th>
           <th scope="col" className={TABLO.th}>Giriş adresi</th>
           <th scope="col" className={TABLO.th}>Girişte logo</th>
           <th scope="col" className={TABLO.th}>Öğrenci</th>
@@ -25,6 +26,7 @@ export default function OkulTablosu({ okullar, site }: { okullar: OkulTabloSatir
               <td className={TABLO.td}>
                 <div className="flex flex-col"><span className="font-bold">{o.ad}</span><span className="text-[13px] text-metin-3">{o.kod} · {o.ilce}</span></div>
               </td>
+              <td className={TABLO.td}>{o.plasiyerAd ?? <Rozet ton="sari">Atanmadı</Rozet>}</td>
               <td className={TABLO.td}>
                 {o.slug ? (
                   <div className="flex flex-wrap items-center gap-2">

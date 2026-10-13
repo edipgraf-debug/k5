@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Fragment } from 'react';
 import { redirect } from 'next/navigation';
 import { oturumAl } from '@/lib/auth';
 import { yonetimRepo } from '@/lib/data/yonetim';
@@ -8,7 +9,7 @@ import { telGoster } from '@/components/yonetim/etiketler';
 
 export const metadata = { title: 'Öğrenci & veli' };
 
-type SP = { q?: string; okulId?: string; subeId?: string; pasif?: string };
+type SP = { q?: string; okulId?: string; subeId?: string; sinif?: string; pasif?: string };
 
 export default async function Ogrenciler({ searchParams }: { searchParams: Promise<SP> }) {
   const o = await oturumAl();
@@ -17,12 +18,23 @@ export default async function Ogrenciler({ searchParams }: { searchParams: Promi
   const q = (sp.q ?? '').trim();
   const okulId = Number(sp.okulId) || null;
   const subeId = Number(sp.subeId) || null;
+  const seviye = sp.sinif != null && sp.sinif !== '' && Number.isInteger(Number(sp.sinif)) ? Number(sp.sinif) : null;
   const pasif = sp.pasif === '1';
   const y = await yonetimRepo();
-  const [okullar, siniflar, ogrenciler] = await Promise.all([
-    y.okulListesi(), okulId ? y.okulSiniflari(okulId) : Promise.resolve([]), y.ogrenciAra({ q, okulId, subeId, pasifDahil: pasif, limit: 200 })]);
-  const subeler = siniflar.flatMap((s) => s.subeler.map((b) => ({ id: b.id, ad: `${s.seviye}-${b.ad}` })));
-  const filtreVar = !!(q || okulId || pasif);
+  const [okullar, siniflar, seviyeler, ogrenciler] = await Promise.all([
+    y.okulListesi(), okulId ? y.okulSiniflari(okulId) : Promise.resolve([]), y.seviyeler(okulId),
+    y.ogrenciAra({ q, okulId, subeId, seviye, pasifDahil: pasif, limit: 500 })]);
+  const subeler = siniflar.filter((s) => seviye == null || s.seviye === seviye).flatMap((s) => s.subeler.map((b) => ({ id: b.id, ad: `${s.seviye}-${b.ad}` })));
+  const filtreVar = !!(q || okulId || pasif || seviye != null || subeId);
+  const sinifAd = (n: number) => (n === 0 ? 'Anasınıfı' : `${n}. sınıf`);
+  const adres = (ek: Record<string, string | number | null>) => {
+    const p = new URLSearchParams();
+    const t = { q: q || null, okulId, sinif: seviye, subeId, pasif: pasif ? 1 : null, ...ek };
+    for (const [k, v] of Object.entries(t)) if (v != null && v !== '') p.set(k, String(v));
+    return `/yonetim/ogrenciler${p.size ? `?${p}` : ''}`;
+  };
+  // şube başlıklarıyla gruplu görünüm: sınıf ya da şube seçiliyken
+  const gruplu = seviye != null || !!subeId;
 
   return (
     <>
@@ -45,6 +57,13 @@ export default async function Ogrenciler({ searchParams }: { searchParams: Promi
               {okullar.map((x) => <option key={x.id} value={x.id}>{x.kod} · {x.ad}</option>)}
             </select>
           </div>
+          <div className="flex min-w-0 flex-[1_1_140px] flex-col gap-1.5">
+            <label htmlFor="f-sinif" className="etiket">Sınıf</label>
+            <select id="f-sinif" name="sinif" defaultValue={seviye ?? ''} className="girdi">
+              <option value="">Tüm sınıflar</option>
+              {seviyeler.map((n) => <option key={n} value={n}>{sinifAd(n)}</option>)}
+            </select>
+          </div>
           {okulId && subeler.length > 0 && (
             <div className="flex min-w-0 flex-[1_1_140px] flex-col gap-1.5">
               <label htmlFor="f-sube" className="etiket">Şube</label>
@@ -61,7 +80,23 @@ export default async function Ogrenciler({ searchParams }: { searchParams: Promi
           {filtreVar && <Link href="/yonetim/ogrenciler" className="self-center text-sm font-bold">Temizle</Link>}
         </form>
 
-        <Bolum id="ogr-liste" baslik={`${ogrenciler.length}${ogrenciler.length === 200 ? '+' : ''} öğrenci`}>
+        {seviyeler.length > 0 && (
+          <nav aria-label="Sınıfa göre" className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-metin-2">Sınıf:</span>
+            <Link href={adres({ sinif: null, subeId: null })} aria-current={seviye == null ? 'true' : undefined}
+              className={`inline-flex min-h-10 items-center rounded-[10px] border-2 px-3.5 text-sm font-bold no-underline ${seviye == null ? 'border-lacivert bg-lacivert text-white' : 'border-kenar bg-white text-lacivert'}`}>Tümü</Link>
+            {seviyeler.map((n) => (
+              <Link key={n} href={adres({ sinif: n, subeId: null })} aria-current={seviye === n ? 'true' : undefined}
+                className={`inline-flex min-h-10 items-center rounded-[10px] border-2 px-3.5 text-sm font-bold no-underline ${seviye === n ? 'border-lacivert bg-lacivert text-white' : 'border-kenar bg-white text-lacivert'}`}>{sinifAd(n)}</Link>
+            ))}
+            {okulId && seviye != null && subeler.map((sb) => (
+              <Link key={sb.id} href={adres({ subeId: subeId === sb.id ? null : sb.id })} aria-current={subeId === sb.id ? 'true' : undefined}
+                className={`inline-flex min-h-10 items-center rounded-[10px] border-2 px-3 text-sm font-bold no-underline ${subeId === sb.id ? 'border-turuncu bg-[#FFF7EA] text-lacivert' : 'border-dashed border-kenar bg-white text-metin-2'}`}>{sb.ad}</Link>
+            ))}
+          </nav>
+        )}
+
+        <Bolum id="ogr-liste" baslik={`${ogrenciler.length}${ogrenciler.length === 500 ? '+' : ''} öğrenci${seviye != null ? ` · ${sinifAd(seviye)}` : ''}`}>
           {ogrenciler.length ? (
             <div className={TABLO.sar}>
               <table className={`${TABLO.tablo} min-w-[820px]`}>
@@ -70,8 +105,14 @@ export default async function Ogrenciler({ searchParams }: { searchParams: Promi
                   <th scope="col" className={TABLO.th}>Şube</th><th scope="col" className={TABLO.th}>Veli</th><th scope="col" className={TABLO.th}>Durum</th>
                 </tr></thead>
                 <tbody>
-                  {ogrenciler.map((x) => (
-                    <tr key={x.id}>
+                  {ogrenciler.map((x, i) => (
+                    <Fragment key={x.id}>
+                    {gruplu && (x.sinifSube !== ogrenciler[i - 1]?.sinifSube || x.okulId !== ogrenciler[i - 1]?.okulId) && (
+                      <tr><th colSpan={6} scope="colgroup" className="border-b border-cizgi bg-[#FFF7EA] px-4 py-2 text-left text-sm font-extrabold">
+                        {x.sinifSube ?? 'Şubesiz'} · {ogrenciler.filter((k) => k.sinifSube === x.sinifSube && k.okulId === x.okulId).length} öğrenci{!okulId ? ` · ${x.okulAd}` : ''}
+                      </th></tr>
+                    )}
+                    <tr>
                       <td className={TABLO.td}><Link href={`/yonetim/ogrenciler/${x.id}`} className="font-bold">{x.ad} {x.soyad}</Link></td>
                       <td className={TABLO.td}>{x.okulNo}</td>
                       <td className={TABLO.td}>{x.okulAd}</td>
@@ -92,6 +133,7 @@ export default async function Ogrenciler({ searchParams }: { searchParams: Promi
                         </div>
                       </td>
                     </tr>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -20,8 +20,11 @@
   --font-sans: 'Nunito Sans', system-ui, sans-serif;
 }
 
-html, body { background: var(--color-zemin); color: var(--color-lacivert); }
-a { color: inherit; }
+/* temel stiller katmanda: Tailwind yardımcı sınıfları (ör. bağlantıda text-white) bunları ezebilsin */
+@layer base {
+  html, body { background: var(--color-zemin); color: var(--color-lacivert); }
+  a { color: inherit; }
+}
 
 @layer components {
   .girdi { @apply h-12 w-full rounded-xl border-2 border-kenar bg-white px-3.5 text-base text-lacivert outline-none focus:border-lacivert; }

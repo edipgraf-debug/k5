@@ -26,9 +26,17 @@ Yığın: **Next.js 16 (App Router) + React 19 + Tailwind CSS 4**, veritabanı *
 | Geçici şifreyle giren personel yeni şifre belirlemeden hiçbir sayfaya geçemez (`/sifre-degistir`); herkes adına tıklayıp şifresini değiştirebilir | ✅ |
 | **Excel ile öğrenci yükleme:** şablon ya da okulun kendi listesi (e-Okul çıktısı, .xlsx / .csv); kontrol → önizleme (yeni / güncellenecek / uyarılı / hatalı) → kaydet; hatalı satırları Excel olarak indir | ✅ |
 | Panelde yapılan her değişiklik kaydedilir (`YonetimIslem`: kim, ne zaman, ne değişti; şifreler yazılmaz) | ✅ |
-| Katalog araması (okul / öğretmen / Kardelen; veliye kapalı) | ✅ |
-| Her iç ekranda ana sayfa ikonu | ✅ |
-| Sepet/ödeme (kart + havale), siparişlerim, hesabım/adresler, toplu sipariş, tedarik (aldı/almadı), hakediş, havale/POS/kurye | ⏳ sıradaki aşamalar (tasarımı hazır) |
+| **Üst yapı (tüm sayfalar):** en solda ana sayfa ikonu, logo, canlı arama çubuğu; logonun altında menü bandı (kitabevinde açılır gruplar), kategori ağaçlı **Katalog** menüsü; tüm sayfalarda alt bilgi (firma bilgisi, kurumsal sayfalar, sözleşmeler) ve WhatsApp destek düğmesi | ✅ |
+| **Katalog** (tüm kullanıcılar): kategori ağacı, arama, **depo stok miktarı**, kampanya fiyatı; veli katalogdan öğrencisinin sepetine ürün / set ekler | ✅ |
+| **Plasiyer:** okul ve öğretmen plasiyere bağlanır (öğretmene okulunkinden farklı plasiyer atanabilir); plasiyer `/yonetim/giris`ten girer, kendi okul/öğretmen, sepet, tahsilat ve terk edilen sepetlerini görür (salt okunur) | ✅ |
+| **Ürünler:** satış durumu, web fiyatı, açıklama, kapak görseli; **kategori ağacı** + hızlı aramayla toplu kategoriye ekleme | ✅ |
+| **Setler:** barkod (iç EAN-13 üretimi ya da elle) + ad + ürünler/adet + set fiyatı (boş = toplam); tavsiye sepetine tek kalem eklenir | ✅ |
+| **Kampanyalar:** tarih aralığı, indirim oranı / ürüne özel fiyat; kampanya sayfası; okul yetkilileri ve öğretmenlere SMS ve/veya e-posta duyurusu | ✅ |
+| **Raporlar:** tahsilat listesi (havale onayı, Excel), tavsiye sepeti durumu (okul/sınıf/plasiyer, dönüşüm), terk edilen sepetler, log raporları (işlem, giriş, bildirim) | ✅ |
+| **Site ayarları:** firma & WhatsApp, ödeme (yöntemler, POS aktif/test, taksit, yönlendirme kuralları), havale/EFT (IBAN doğrulamalı hesaplar), kargo & kurye (firma, bölge, ücretsiz limit), **SMS ve e-posta operatörü** (şifre şifreli saklanır, deneme gönderimi), kurumsal sayfalar | ✅ |
+| **Hakediş:** okul bazında oran + tarih; "okul görsün" açıksa okul panelinde ciro, oran, hakediş tutarı | ✅ |
+| Okul / öğretmen ana sayfası: sınıflar, öğrenciler, öğretmenlerin sepetleri dahil tüm sepetler, sepet içeriği, sipariş durumu | ✅ |
+| Veli ödeme adımı (kart 3D + havale), siparişlerim, toplu sipariş, Opak'a sipariş aktarımı, Opak stok senkronu | ⏳ sıradaki aşamalar |
 
 ## Hızlı başlangıç (örnek veriyle)
 
@@ -47,6 +55,7 @@ npm run dev                    # http://localhost:3000
 | Öğretmen (yalnız 5-A) | ogretmen@demo.k12.tr / `Demo1234` |
 | Okul yönetimi | okul@demo.k12.tr / `Demo1234` |
 | Kardelen yönetim (`/yonetim/giris`) | yonetim@kardelenokul.com / `Demo1234` |
+| Plasiyer (`/yonetim/giris`) | plasiyer@kardelenokul.com / `Demo1234` |
 
 Okula özel giriş örnekleri: `/ornek-ortaokulu` (logo açık), `/ornek-ilkokulu` (logosuz).
 
@@ -61,8 +70,10 @@ Okula özel giriş örnekleri: `/ornek-ortaokulu` (logo açık), `/ornek-ilkokul
 
 ## SMS ve e-posta
 
-- `SMS_PROVIDER=http` → `src/lib/notify/sms.ts` içindeki `HttpSms` sınıfı, seçilen SMS firmasının API'sine göre uyarlanır (istek gövdesi ve başarılı yanıt kontrolü).
-- `EMAIL_PROVIDER=smtp` → `SMTP_*` değerleri.
+- Operatörler **Site ayarları › SMS & e-posta operatörü** ekranından seçilir (NetGSM, İleti Merkezi, genel HTTP; SMTP). Panelde ayar yoksa ortam değişkenleri kullanılır (`SMS_PROVIDER=http`, `SMTP_*`).
+- Operatör şifreleri `Ayar` tablosunda **AES-256-GCM ile şifreli** tutulur; anahtar `AYAR_ANAHTARI` (yoksa `SESSION_SECRET`'tan türetilir). Anahtar değişirse şifreleri ekrandan yeniden girin.
+- NetGSM / İleti Merkezi bağlantıları firmaların bilinen API biçimine göre yazıldı; canlıya almadan önce firmanın güncel dokümanıyla ve "Deneme gönder" ile doğrulayın.
+- Test sitesinde (`DEMO_MODU=true`) panelde operatör seçilse bile gönderim yapılmaz, sunucu günlüğüne yazılır.
 - SMS ve e-postadaki bağlantı `SITE_URL/okul-adresi` olur (okulun adresi yoksa `/giris`).
 - Liste yayınında her gönderim `Bildirim` tablosuna `Kuyrukta → Gonderildi/Hata` olarak yazılır. Çok kalabalık okullarda gönderim bir arka plan işine taşınabilir (hatalı kayıtlar yeniden denenir).
 

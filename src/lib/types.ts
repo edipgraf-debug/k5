@@ -1,4 +1,4 @@
-export type Rol = 'veli' | 'ogretmen' | 'okul' | 'yonetim';
+export type Rol = 'veli' | 'ogretmen' | 'okul' | 'yonetim' | 'plasiyer';
 
 export interface Oturum {
   sub: number;          // Veli.Id veya Kullanici.Id
@@ -21,7 +21,7 @@ export interface Veli {
 
 export interface Personel {
   id: number;
-  tip: 'Yonetim' | 'Okul' | 'Ogretmen';
+  tip: 'Yonetim' | 'Plasiyer' | 'Okul' | 'Ogretmen';
   okulId: number | null;
   adSoyad: string;
   eposta: string;
@@ -68,14 +68,18 @@ export interface Urun {
   yazar: string | null;
   kategori: string | null;
   fiyat: number;        // KDV dahil, veliye yansıyan
+  stok?: number | null; // depo stok miktarı (null = bilinmiyor)
+  kapak?: boolean;      // sitede yüklenmiş kapak görseli var
 }
 
 export type Kapsam = 'Seviye' | 'Sube' | 'Ogrenci';
 /** Toplu: kapsamdaki tüm öğrenciler görür · Secili: yalnız tek tek seçilen öğrenciler görür */
 export type HedefTipi = 'Toplu' | 'Secili';
 
+/** Tavsiye sepeti satırı: tek ürün (urunId) ya da ürün seti (setId); ikisinden yalnız biri dolu. */
 export interface ListeSatiri {
-  urunId: number;
+  urunId: number | null;
+  setId?: number | null;
   adet: number;
   zorunlu: boolean;
   satisFiyati: number | null;
@@ -206,5 +210,21 @@ export interface YayinOzeti {
   hatirlatma: boolean;
   tarih: Date;
   yayinlayan: string;
-  yayinlayanTip: 'Yonetim' | 'Okul' | 'Ogretmen';
+  yayinlayanTip: 'Yonetim' | 'Plasiyer' | 'Okul' | 'Ogretmen';
+}
+
+/** Sepette / katalogda gösterilen kalem: ürün ya da set. anahtar = "u12" / "s3" */
+export interface Kalem {
+  anahtar: string;
+  tur: 'urun' | 'set';
+  id: number;
+  ad: string;
+  alt: string;              // yayınevi ya da "3 ürünlük set"
+  barkod: string | null;
+  fiyat: number;            // KDV dahil, veliye yansıyan
+  icerik?: { ad: string; adet: number }[];   // set içeriği
+  stok?: number | null;     // ürün: depo stoku; set: içindeki ürünlerden yapılabilecek en az set
+  kapak?: boolean;          // ürünün kapak görseli var (/api/kapak/{id})
+  eskiFiyat?: number | null; // kampanyada: kampanya öncesi fiyat
+  kampanya?: string | null;  // geçerli kampanya adı
 }

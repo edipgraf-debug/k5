@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import GirisKapisi from '@/app/giris/GirisKapisi';
 
 const MADDELER = [
@@ -17,7 +16,7 @@ export interface GirisOkulu {
 /** Genel giriş (/giris) ve okula özel giriş (/{okul-adi}) aynı düzeni kullanır. */
 export default function GirisSablonu({ okul }: { okul?: GirisOkulu }) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-[calc(100vh-40px)] flex-col">
       <div className="flex flex-1 flex-wrap">
         <section className="flex min-w-0 flex-[1_1_440px] flex-col justify-between gap-12 bg-lacivert px-8 py-12 text-white sm:px-12">
           <div className="flex items-center gap-3.5">
@@ -62,17 +61,6 @@ export default function GirisSablonu({ okul }: { okul?: GirisOkulu }) {
           <GirisKapisi baslik={okul ? `${okul.ad} girişi` : 'Giriş yap'} />
         </section>
       </div>
-      <footer className="border-t border-cizgi bg-white">
-        <div className="mx-auto flex max-w-[1200px] flex-wrap justify-between gap-3 px-6 py-4 text-sm text-metin-2">
-          <span>© {new Date().getFullYear()} Kardelen Okul</span>
-          <nav aria-label="Yasal" className="flex flex-wrap gap-5">
-            <Link href="/yasal/kvkk">KVKK Aydınlatma Metni</Link>
-            <Link href="/yasal/mesafeli-satis">Mesafeli Satış Sözleşmesi</Link>
-            <Link href="/yasal/iptal-iade">İptal ve İade Koşulları</Link>
-            <Link href="/yasal/iletisim">İletişim</Link>
-          </nav>
-        </div>
-      </footer>
     </div>
   );
 }

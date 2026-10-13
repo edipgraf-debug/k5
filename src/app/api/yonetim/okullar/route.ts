@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { govde, hata } from '@/lib/api';
 import { yonetimRepo } from '@/lib/data/yonetim';
-import { kayitIslemi, OkulSema, yonetici } from '@/lib/yonetim-api';
+import { kayitIslemi, OkulSema, plasiyerKontrol, yonetici } from '@/lib/yonetim-api';
 
 /** Yeni okul */
 export async function POST(req: Request) {
@@ -9,6 +9,8 @@ export async function POST(req: Request) {
   if (!o) return hata('Yetkiniz yok', 403);
   const g = await govde(req, OkulSema);
   if ('yanit' in g) return g.yanit;
+  const pk = await plasiyerKontrol(g.veri.plasiyerId);
+  if (pk) return hata(pk);
   const y = await yonetimRepo();
   const id = await kayitIslemi(() => y.okulEkle(g.veri));
   if (id instanceof Response) return id;

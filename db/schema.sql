@@ -50,6 +50,22 @@ CREATE TABLE dbo.Ayar (
 );
 GO
 
+/* Kurumsal sayfalar (hakkımızda, iletişim, KVKK, mesafeli satış, iade...). İçerik sade metin; boş satır paragraf,
+   "## " ile başlayan satır ara başlık. Yönetim panelinden düzenlenir, /sayfa/{Slug} adresinde yayınlanır. */
+CREATE TABLE dbo.SayfaIcerik (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_SayfaIcerik PRIMARY KEY,
+    Slug                VARCHAR(60)         NOT NULL,
+    Baslik              NVARCHAR(150)       NOT NULL,
+    Icerik              NVARCHAR(MAX)       NOT NULL,
+    YayindaMi           BIT                 NOT NULL CONSTRAINT DF_SayfaIcerik_Yayinda DEFAULT (1),
+    AltBilgideGoster    BIT                 NOT NULL CONSTRAINT DF_SayfaIcerik_AltBilgi DEFAULT (1),
+    Sira                INT                 NOT NULL CONSTRAINT DF_SayfaIcerik_Sira DEFAULT (0),
+    GuncellemeTarihi    DATETIME2(0)        NOT NULL CONSTRAINT DF_SayfaIcerik_Guncelleme DEFAULT (SYSDATETIME()),
+    CONSTRAINT UQ_SayfaIcerik_Slug UNIQUE (Slug),
+    CONSTRAINT CK_SayfaIcerik_Slug CHECK (Slug NOT LIKE '%[^a-z0-9-]%')
+);
+GO
+
 /* ---------------------------------------------------------------------
    2. OKUL / SINIF / ŞUBE
    --------------------------------------------------------------------- */
@@ -68,6 +84,8 @@ CREATE TABLE dbo.Okul (
     Slug                VARCHAR(80)         NULL,              -- okula özel giriş adresi: kardelenokul.com/{Slug}
     LogoDosya           NVARCHAR(200)       NULL,              -- yüklenen okul logosu (depodaki dosya adı)
     GiristeLogoGoster   BIT                 NOT NULL CONSTRAINT DF_Okul_LogoGoster DEFAULT (0),  -- isteğe bağlı: girişte logo
+    PlasiyerId          INT                 NULL,              -- okulun plasiyeri (Kullanici.Tip = 'Plasiyer'); FK aşağıda, Kullanici'dan sonra
+    HakedisGoster       BIT                 NOT NULL CONSTRAINT DF_Okul_HakedisGoster DEFAULT (0),  -- 1 = okul kendi panelinde ciro / hakediş görür
     AktifMi             BIT                 NOT NULL CONSTRAINT DF_Okul_AktifMi DEFAULT (1),
     OlusturmaTarihi     DATETIME2(0)        NOT NULL CONSTRAINT DF_Okul_Olusturma DEFAULT (SYSDATETIME()),
     GuncellemeTarihi    DATETIME2(0)        NULL,
@@ -256,12 +274,15 @@ GO
 
 CREATE TABLE dbo.Kullanici (
     Id                      INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_Kullanici PRIMARY KEY,
-    Tip                     VARCHAR(10)         NOT NULL,      -- Yonetim / Okul / Ogretmen
+    Tip                     VARCHAR(10)         NOT NULL,      -- Yonetim / Plasiyer / Okul / Ogretmen
     OkulId                  INT                 NULL CONSTRAINT FK_Kullanici_Okul REFERENCES dbo.Okul(Id),
     AdSoyad                 NVARCHAR(150)       NOT NULL,
     Eposta                  NVARCHAR(150)       NOT NULL,
     Telefon                 VARCHAR(10)         NULL,
     SifreHash               VARCHAR(255)        NOT NULL,
+    OpakPlasiyerKodu        NVARCHAR(30)        NULL,          -- Tip = 'Plasiyer': Opak'taki plasiyer kodu
+    PlasiyerId              INT                 NULL CONSTRAINT FK_Kullanici_Plasiyer REFERENCES dbo.Kullanici(Id),
+                                                               -- Tip = 'Ogretmen': okulun plasiyerinden farklıysa (NULL = okulun plasiyeri)
     SifreDegistirmeliMi     BIT                 NOT NULL CONSTRAINT DF_Kullanici_SifreDegistir DEFAULT (1),
     BasarisizGirisSayisi    TINYINT             NOT NULL CONSTRAINT DF_Kullanici_Basarisiz DEFAULT (0),
     KilitBitisTarihi        DATETIME2(0)        NULL,
@@ -269,11 +290,24 @@ CREATE TABLE dbo.Kullanici (
     AktifMi                 BIT                 NOT NULL CONSTRAINT DF_Kullanici_Aktif DEFAULT (1),
     OlusturmaTarihi         DATETIME2(0)        NOT NULL CONSTRAINT DF_Kullanici_Olusturma DEFAULT (SYSDATETIME()),
     CONSTRAINT UQ_Kullanici_Eposta UNIQUE (Eposta),
-    CONSTRAINT CK_Kullanici_Tip CHECK (Tip IN ('Yonetim', 'Okul', 'Ogretmen')),
+    CONSTRAINT CK_Kullanici_Tip CHECK (Tip IN ('Yonetim', 'Plasiyer', 'Okul', 'Ogretmen')),
     CONSTRAINT CK_Kullanici_Okul CHECK (
-        (Tip = 'Yonetim' AND OkulId IS NULL) OR (Tip IN ('Okul', 'Ogretmen') AND OkulId IS NOT NULL)
-    )
+        (Tip IN ('Yonetim', 'Plasiyer') AND OkulId IS NULL) OR (Tip IN ('Okul', 'Ogretmen') AND OkulId IS NOT NULL)
+    ),
+    CONSTRAINT CK_Kullanici_PlasiyerAtama CHECK (PlasiyerId IS NULL OR Tip = 'Ogretmen'),
+    CONSTRAINT CK_Kullanici_OpakPlasiyer CHECK (OpakPlasiyerKodu IS NULL OR Tip = 'Plasiyer')
 );
+GO
+CREATE UNIQUE INDEX UX_Kullanici_OpakPlasiyer ON dbo.Kullanici (OpakPlasiyerKodu) WHERE OpakPlasiyerKodu IS NOT NULL;
+CREATE INDEX IX_Kullanici_Plasiyer ON dbo.Kullanici (PlasiyerId) WHERE PlasiyerId IS NOT NULL;
+GO
+
+/* Okul ve öğretmen plasiyere bağlanır. Öğretmenin plasiyeri = Kullanici.PlasiyerId ?? Okul.PlasiyerId
+   (uygulama, atanan kullanıcının Tip = 'Plasiyer' olduğunu denetler). */
+ALTER TABLE dbo.Okul
+    ADD CONSTRAINT FK_Okul_Plasiyer FOREIGN KEY (PlasiyerId) REFERENCES dbo.Kullanici(Id);
+GO
+CREATE INDEX IX_Okul_Plasiyer ON dbo.Okul (PlasiyerId) WHERE PlasiyerId IS NOT NULL;
 GO
 
 ALTER TABLE dbo.OgrenciYuklemeParti
@@ -308,10 +342,30 @@ CREATE TABLE dbo.YonetimIslem (
     Islem           NVARCHAR(100)       NOT NULL,
     Ayrinti         NVARCHAR(500)       NULL,
     Tarih           DATETIME2(0)        NOT NULL CONSTRAINT DF_YonetimIslem_Tarih DEFAULT (SYSDATETIME()),
-    CONSTRAINT CK_YonetimIslem_Hedef CHECK (HedefTip IN ('Okul', 'Ogrenci', 'Veli', 'Kullanici'))
+    CONSTRAINT CK_YonetimIslem_Hedef CHECK (HedefTip IN ('Okul', 'Ogrenci', 'Veli', 'Kullanici', 'Urun', 'Set', 'Odeme', 'Ayar', 'Sayfa', 'Banka', 'Kargo', 'Pos', 'Kategori', 'Kampanya', 'Hakedis'))
 );
 GO
 CREATE INDEX IX_YonetimIslem_Hedef ON dbo.YonetimIslem (HedefTip, HedefId, Tarih DESC);
+CREATE INDEX IX_YonetimIslem_Tarih ON dbo.YonetimIslem (Tarih DESC) INCLUDE (KullaniciId, HedefTip);
+GO
+
+/* Giriş kayıtları (başarılı / başarısız): log raporu ve güvenlik takibi. Şifre ve kod YAZILMAZ. */
+CREATE TABLE dbo.GirisKaydi (
+    Id              BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_GirisKaydi PRIMARY KEY,
+    Tip             VARCHAR(10)         NOT NULL,          -- Veli / Personel
+    KullaniciId     INT                 NULL CONSTRAINT FK_GirisKaydi_Kullanici REFERENCES dbo.Kullanici(Id),
+    VeliId          INT                 NULL CONSTRAINT FK_GirisKaydi_Veli REFERENCES dbo.Veli(Id),
+    Kimlik          NVARCHAR(150)       NOT NULL,          -- girilen e-posta / maskeli telefon
+    Rol             VARCHAR(10)         NULL,
+    BasariliMi      BIT                 NOT NULL,
+    Sebep           NVARCHAR(100)       NULL,              -- HataliSifre / Kilitli / BilinmeyenHesap ...
+    Ip              VARCHAR(45)         NULL,
+    TarayiciBilgisi NVARCHAR(300)       NULL,
+    Tarih           DATETIME2(0)        NOT NULL CONSTRAINT DF_GirisKaydi_Tarih DEFAULT (SYSDATETIME()),
+    CONSTRAINT CK_GirisKaydi_Tip CHECK (Tip IN ('Veli', 'Personel'))
+);
+GO
+CREATE INDEX IX_GirisKaydi_Tarih ON dbo.GirisKaydi (Tarih DESC) INCLUDE (Tip, BasariliMi);
 GO
 
 /* ---------------------------------------------------------------------
@@ -331,10 +385,103 @@ CREATE TABLE dbo.Urun (
     GorselId            INT                 NULL,              -- Opak images_id
     AktifMi             BIT                 NOT NULL CONSTRAINT DF_Urun_Aktif DEFAULT (1),
     SonSenkronTarihi    DATETIME2(0)        NULL,
-    CONSTRAINT UQ_Urun_OpakStokKodu UNIQUE (OpakStokKodu)
+    -- sitede düzenlenen alanlar (Opak senkronu bunlara dokunmaz)
+    WebFiyati           DECIMAL(18,2)       NULL,              -- NULL = ListeFiyati; dolu = sitede veliye yansıyan KDV dahil fiyat
+    Aciklama            NVARCHAR(2000)      NULL,
+    KapakDosya          NVARCHAR(200)       NULL,              -- sitede yüklenen kapak görseli
+    GuncellemeTarihi    DATETIME2(0)        NULL,
+    -- depo stoku (Opak depo miktarından senkronla; tüm kullanıcılara gösterilir)
+    StokMiktari         INT                 NULL,              -- NULL = bilinmiyor
+    StokTarihi          DATETIME2(0)        NULL,
+    CONSTRAINT UQ_Urun_OpakStokKodu UNIQUE (OpakStokKodu),
+    CONSTRAINT CK_Urun_WebFiyati CHECK (WebFiyati IS NULL OR WebFiyati >= 0)
 );
 GO
 CREATE INDEX IX_Urun_Barkod ON dbo.Urun (Barkod);
+GO
+
+/* Ürün setleri: sitede barkod ve ad verilerek oluşturulur (ör. "5. Sınıf Okuma Seti").
+   Tavsiye sepetine tek kalem olarak eklenir; siparişte içindeki ürünlere bölünerek Opak'a aktarılır.
+   Barkod, ürün barkodlarıyla çakışmamalıdır (uygulama denetler). */
+CREATE TABLE dbo.UrunSet (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_UrunSet PRIMARY KEY,
+    Barkod              NVARCHAR(30)        NOT NULL,
+    Ad                  NVARCHAR(300)       NOT NULL,
+    Aciklama            NVARCHAR(1000)      NULL,
+    Fiyat               DECIMAL(18,2)       NULL,              -- NULL = içindeki ürünlerin toplamı; dolu = set fiyatı (KDV dahil)
+    AktifMi             BIT                 NOT NULL CONSTRAINT DF_UrunSet_Aktif DEFAULT (1),
+    OlusturanKullaniciId INT                NOT NULL CONSTRAINT FK_UrunSet_Kullanici REFERENCES dbo.Kullanici(Id),
+    OlusturmaTarihi     DATETIME2(0)        NOT NULL CONSTRAINT DF_UrunSet_Olusturma DEFAULT (SYSDATETIME()),
+    GuncellemeTarihi    DATETIME2(0)        NULL,
+    CONSTRAINT UQ_UrunSet_Barkod UNIQUE (Barkod),
+    CONSTRAINT CK_UrunSet_Fiyat CHECK (Fiyat IS NULL OR Fiyat >= 0)
+);
+GO
+
+CREATE TABLE dbo.UrunSetSatir (
+    SetId       INT     NOT NULL CONSTRAINT FK_UrunSetSatir_Set  REFERENCES dbo.UrunSet(Id) ON DELETE CASCADE,
+    UrunId      INT     NOT NULL CONSTRAINT FK_UrunSetSatir_Urun REFERENCES dbo.Urun(Id),
+    Adet        INT     NOT NULL CONSTRAINT DF_UrunSetSatir_Adet DEFAULT (1),
+    Sira        INT     NOT NULL CONSTRAINT DF_UrunSetSatir_Sira DEFAULT (0),
+    CONSTRAINT PK_UrunSetSatir PRIMARY KEY (SetId, UrunId),
+    CONSTRAINT CK_UrunSetSatir_Adet CHECK (Adet BETWEEN 1 AND 50)
+);
+GO
+CREATE INDEX IX_UrunSetSatir_Urun ON dbo.UrunSetSatir (UrunId);
+GO
+
+/* Katalog kategori ağacı (yönetimden oluşturulur; Opak'taki kategoriden bağımsız). Bir ürün birden çok kategoride olabilir. */
+CREATE TABLE dbo.Kategori (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_Kategori PRIMARY KEY,
+    UstId               INT                 NULL CONSTRAINT FK_Kategori_Ust REFERENCES dbo.Kategori(Id),
+    Ad                  NVARCHAR(150)       NOT NULL,
+    Slug                VARCHAR(160)        NOT NULL,
+    Sira                INT                 NOT NULL CONSTRAINT DF_Kategori_Sira DEFAULT (0),
+    AktifMi             BIT                 NOT NULL CONSTRAINT DF_Kategori_Aktif DEFAULT (1),
+    OlusturmaTarihi     DATETIME2(0)        NOT NULL CONSTRAINT DF_Kategori_Olusturma DEFAULT (SYSDATETIME()),
+    CONSTRAINT UQ_Kategori_Slug UNIQUE (Slug),
+    CONSTRAINT CK_Kategori_Slug CHECK (Slug NOT LIKE '%[^a-z0-9-]%'),
+    CONSTRAINT CK_Kategori_Ust CHECK (UstId IS NULL OR UstId <> Id)
+);
+GO
+CREATE INDEX IX_Kategori_Ust ON dbo.Kategori (UstId, Sira);
+GO
+
+CREATE TABLE dbo.UrunKategori (
+    KategoriId  INT     NOT NULL CONSTRAINT FK_UrunKategori_Kategori REFERENCES dbo.Kategori(Id) ON DELETE CASCADE,
+    UrunId      INT     NOT NULL CONSTRAINT FK_UrunKategori_Urun     REFERENCES dbo.Urun(Id),
+    Sira        INT     NOT NULL CONSTRAINT DF_UrunKategori_Sira DEFAULT (0),
+    CONSTRAINT PK_UrunKategori PRIMARY KEY (KategoriId, UrunId)
+);
+GO
+CREATE INDEX IX_UrunKategori_Urun ON dbo.UrunKategori (UrunId);
+GO
+
+/* Kampanyalar: kampanya sayfasında tüm kullanıcılara görünür; okul yetkilileri ve öğretmenlere SMS / e-posta ile duyurulur. */
+CREATE TABLE dbo.Kampanya (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_Kampanya PRIMARY KEY,
+    Ad                  NVARCHAR(200)       NOT NULL,
+    Aciklama            NVARCHAR(2000)      NULL,
+    BaslangicTarihi     DATE                NOT NULL,
+    BitisTarihi         DATE                NOT NULL,
+    IndirimOrani        DECIMAL(5,2)        NULL,              -- ürüne özel fiyat yoksa uygulanır
+    AktifMi             BIT                 NOT NULL CONSTRAINT DF_Kampanya_Aktif DEFAULT (1),
+    OlusturanKullaniciId INT                NOT NULL CONSTRAINT FK_Kampanya_Kullanici REFERENCES dbo.Kullanici(Id),
+    OlusturmaTarihi     DATETIME2(0)        NOT NULL CONSTRAINT DF_Kampanya_Olusturma DEFAULT (SYSDATETIME()),
+    GuncellemeTarihi    DATETIME2(0)        NULL,
+    CONSTRAINT CK_Kampanya_Tarih CHECK (BitisTarihi >= BaslangicTarihi),
+    CONSTRAINT CK_Kampanya_Indirim CHECK (IndirimOrani IS NULL OR IndirimOrani BETWEEN 0 AND 100)
+);
+GO
+
+CREATE TABLE dbo.KampanyaUrun (
+    KampanyaId      INT             NOT NULL CONSTRAINT FK_KampanyaUrun_Kampanya REFERENCES dbo.Kampanya(Id) ON DELETE CASCADE,
+    UrunId          INT             NOT NULL CONSTRAINT FK_KampanyaUrun_Urun     REFERENCES dbo.Urun(Id),
+    KampanyaFiyati  DECIMAL(18,2)   NULL,                      -- NULL = indirim oranıyla hesaplanır
+    Sira            INT             NOT NULL CONSTRAINT DF_KampanyaUrun_Sira DEFAULT (0),
+    CONSTRAINT PK_KampanyaUrun PRIMARY KEY (KampanyaId, UrunId),
+    CONSTRAINT CK_KampanyaUrun_Fiyat CHECK (KampanyaFiyati IS NULL OR KampanyaFiyati >= 0)
+);
 GO
 
 CREATE TABLE dbo.OneriListe (                                  -- Kardelen'in hazırladığı öneri listeleri
@@ -406,14 +553,18 @@ GO
 CREATE TABLE dbo.KitapListeSatir (
     Id              INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_KitapListeSatir PRIMARY KEY,
     KitapListeId    INT                 NOT NULL CONSTRAINT FK_KitapListeSatir_Liste REFERENCES dbo.KitapListe(Id),
-    UrunId          INT                 NOT NULL CONSTRAINT FK_KitapListeSatir_Urun  REFERENCES dbo.Urun(Id),
+    UrunId          INT                 NULL CONSTRAINT FK_KitapListeSatir_Urun  REFERENCES dbo.Urun(Id),
+    SetId           INT                 NULL CONSTRAINT FK_KitapListeSatir_Set   REFERENCES dbo.UrunSet(Id),  -- ürün ya da set
     Adet            INT                 NOT NULL CONSTRAINT DF_KitapListeSatir_Adet DEFAULT (1),
     ZorunluMu       BIT                 NOT NULL CONSTRAINT DF_KitapListeSatir_Zorunlu DEFAULT (1),   -- 0 = isteğe bağlı
     SatisFiyati     DECIMAL(18,2)       NULL,                  -- NULL = Urun.ListeFiyati; dolu = okula özel KDV dahil fiyat
     Sira            INT                 NOT NULL CONSTRAINT DF_KitapListeSatir_Sira DEFAULT (0),
-    CONSTRAINT UQ_KitapListeSatir UNIQUE (KitapListeId, UrunId),
+    CONSTRAINT CK_KitapListeSatir_Kalem CHECK ((UrunId IS NULL AND SetId IS NOT NULL) OR (UrunId IS NOT NULL AND SetId IS NULL)),
     CONSTRAINT CK_KitapListeSatir_Adet CHECK (Adet > 0)
 );
+GO
+CREATE UNIQUE INDEX UX_KitapListeSatir_Urun ON dbo.KitapListeSatir (KitapListeId, UrunId) WHERE UrunId IS NOT NULL;
+CREATE UNIQUE INDEX UX_KitapListeSatir_Set  ON dbo.KitapListeSatir (KitapListeId, SetId)  WHERE SetId  IS NOT NULL;
 GO
 
 /* Liste yayınları ve veli bildirimleri
@@ -482,6 +633,24 @@ CREATE TABLE dbo.Bildirim (
 GO
 CREATE INDEX IX_Bildirim_Kuyruk ON dbo.Bildirim (OlusturmaTarihi) WHERE Durum = 'Kuyrukta';
 CREATE INDEX IX_Bildirim_Yayin  ON dbo.Bildirim (KitapListeYayinId);
+GO
+
+/* Kampanya duyuruları: okul yetkilisi / öğretmen başına, kanal başına bir satır */
+CREATE TABLE dbo.KampanyaGonderim (
+    Id                  BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_KampanyaGonderim PRIMARY KEY,
+    KampanyaId          INT                 NOT NULL CONSTRAINT FK_KampanyaGonderim_Kampanya REFERENCES dbo.Kampanya(Id),
+    KullaniciId         INT                 NOT NULL CONSTRAINT FK_KampanyaGonderim_Kullanici REFERENCES dbo.Kullanici(Id),
+    Kanal               VARCHAR(10)         NOT NULL,
+    Alici               NVARCHAR(150)       NOT NULL,
+    Durum               VARCHAR(10)         NOT NULL CONSTRAINT DF_KampanyaGonderim_Durum DEFAULT ('Kuyrukta'),
+    HataMesaji          NVARCHAR(500)       NULL,
+    GonderenKullaniciId INT                 NOT NULL CONSTRAINT FK_KampanyaGonderim_Gonderen REFERENCES dbo.Kullanici(Id),
+    Tarih               DATETIME2(0)        NOT NULL CONSTRAINT DF_KampanyaGonderim_Tarih DEFAULT (SYSDATETIME()),
+    CONSTRAINT CK_KampanyaGonderim_Kanal CHECK (Kanal IN ('SMS', 'Eposta')),
+    CONSTRAINT CK_KampanyaGonderim_Durum CHECK (Durum IN ('Kuyrukta', 'Gonderildi', 'Hata'))
+);
+GO
+CREATE INDEX IX_KampanyaGonderim_Kampanya ON dbo.KampanyaGonderim (KampanyaId, Tarih);
 GO
 
 /* ---------------------------------------------------------------------
@@ -570,6 +739,7 @@ CREATE TABLE dbo.SiparisSatir (
     SiparisId           INT                 NOT NULL CONSTRAINT FK_SiparisSatir_Siparis REFERENCES dbo.Siparis(Id),
     UrunId              INT                 NOT NULL CONSTRAINT FK_SiparisSatir_Urun    REFERENCES dbo.Urun(Id),
     KitapListeSatirId   INT                 NULL CONSTRAINT FK_SiparisSatir_ListeSatir  REFERENCES dbo.KitapListeSatir(Id),
+    SetId               INT                 NULL CONSTRAINT FK_SiparisSatir_Set         REFERENCES dbo.UrunSet(Id),  -- setten bölünen satır
     Adet                INT                 NOT NULL,
     BirimFiyat          DECIMAL(18,2)       NOT NULL,          -- KDV dahil liste fiyatı
     IndirimOrani        DECIMAL(5,2)        NOT NULL CONSTRAINT DF_SiparisSatir_Indirim DEFAULT (0),
@@ -580,6 +750,39 @@ CREATE TABLE dbo.SiparisSatir (
 );
 GO
 CREATE INDEX IX_SiparisSatir_Siparis ON dbo.SiparisSatir (SiparisId);
+GO
+
+/* Velinin sunucudaki sepeti (öğrenci başına bir açık sepet). Terk edilen sepet raporu buradan beslenir:
+   Durum = 'Acik', içinde kalem var ve son güncellemeden bu yana sipariş yok. */
+CREATE TABLE dbo.VeliSepet (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_VeliSepet PRIMARY KEY,
+    VeliId              INT                 NOT NULL CONSTRAINT FK_VeliSepet_Veli    REFERENCES dbo.Veli(Id),
+    OgrenciId           INT                 NOT NULL CONSTRAINT FK_VeliSepet_Ogrenci REFERENCES dbo.Ogrenci(Id),
+    Durum               VARCHAR(10)         NOT NULL CONSTRAINT DF_VeliSepet_Durum DEFAULT ('Acik'),
+    SiparisId           INT                 NULL CONSTRAINT FK_VeliSepet_Siparis REFERENCES dbo.Siparis(Id),
+    Tutar               DECIMAL(18,2)       NOT NULL CONSTRAINT DF_VeliSepet_Tutar DEFAULT (0),   -- son kayıttaki KDV dahil toplam
+    OlusturmaTarihi     DATETIME2(0)        NOT NULL CONSTRAINT DF_VeliSepet_Olusturma DEFAULT (SYSDATETIME()),
+    GuncellemeTarihi    DATETIME2(0)        NOT NULL CONSTRAINT DF_VeliSepet_Guncelleme DEFAULT (SYSDATETIME()),
+    CONSTRAINT CK_VeliSepet_Durum CHECK (Durum IN ('Acik', 'Siparis', 'Bosaltildi'))
+);
+GO
+CREATE UNIQUE INDEX UX_VeliSepet_Acik ON dbo.VeliSepet (VeliId, OgrenciId) WHERE Durum = 'Acik';
+CREATE INDEX IX_VeliSepet_Durum ON dbo.VeliSepet (Durum, GuncellemeTarihi) INCLUDE (VeliId, OgrenciId, Tutar);
+GO
+
+CREATE TABLE dbo.VeliSepetSatir (
+    Id                  INT IDENTITY(1,1)   NOT NULL CONSTRAINT PK_VeliSepetSatir PRIMARY KEY,
+    VeliSepetId         INT                 NOT NULL CONSTRAINT FK_VeliSepetSatir_Sepet REFERENCES dbo.VeliSepet(Id) ON DELETE CASCADE,
+    KitapListeId        INT                 NULL CONSTRAINT FK_VeliSepetSatir_Liste REFERENCES dbo.KitapListe(Id),
+    UrunId              INT                 NULL CONSTRAINT FK_VeliSepetSatir_Urun  REFERENCES dbo.Urun(Id),
+    SetId               INT                 NULL CONSTRAINT FK_VeliSepetSatir_Set   REFERENCES dbo.UrunSet(Id),
+    Adet                INT                 NOT NULL CONSTRAINT DF_VeliSepetSatir_Adet DEFAULT (1),
+    BirimFiyat          DECIMAL(18,2)       NOT NULL,
+    CONSTRAINT CK_VeliSepetSatir_Kalem CHECK ((UrunId IS NULL AND SetId IS NOT NULL) OR (UrunId IS NOT NULL AND SetId IS NULL)),
+    CONSTRAINT CK_VeliSepetSatir_Adet CHECK (Adet > 0)
+);
+GO
+CREATE INDEX IX_VeliSepetSatir_Sepet ON dbo.VeliSepetSatir (VeliSepetId);
 GO
 
 CREATE TABLE dbo.TopluSiparisDagitim (                         -- idarenin toplu alımı hangi öğrenciye gidiyor
@@ -659,10 +862,14 @@ CREATE TABLE dbo.BankaHesabi (                                 -- havale ekranı
     Banka       NVARCHAR(100)       NOT NULL,
     HesapAdi    NVARCHAR(200)       NOT NULL,
     Iban        VARCHAR(34)         NOT NULL,
+    Sube        NVARCHAR(100)       NULL,
+    HesapNo     VARCHAR(30)         NULL,
+    ParaBirimi  CHAR(3)             NOT NULL CONSTRAINT DF_BankaHesabi_ParaBirimi DEFAULT ('TRY'),
     Sira        INT                 NOT NULL CONSTRAINT DF_BankaHesabi_Sira DEFAULT (0),
     AktifMi     BIT                 NOT NULL CONSTRAINT DF_BankaHesabi_Aktif DEFAULT (1),
     CONSTRAINT UQ_BankaHesabi_Iban UNIQUE (Iban),
-    CONSTRAINT CK_BankaHesabi_Iban CHECK (Iban LIKE 'TR%')
+    CONSTRAINT CK_BankaHesabi_Iban CHECK (Iban LIKE 'TR[0-9][0-9]%' AND LEN(Iban) = 26),
+    CONSTRAINT CK_BankaHesabi_ParaBirimi CHECK (ParaBirimi IN ('TRY', 'USD', 'EUR'))
 );
 GO
 
@@ -708,8 +915,15 @@ CREATE TABLE dbo.KuryeFirma (
     Kod                 VARCHAR(20)         NOT NULL,          -- uygulamadaki entegrasyon sürücüsünün adı
     Ad                  NVARCHAR(100)       NOT NULL,
     EntegrasyonTipi     VARCHAR(10)         NOT NULL CONSTRAINT DF_KuryeFirma_Entegrasyon DEFAULT ('Manuel'),
+    Tur                 VARCHAR(10)         NOT NULL CONSTRAINT DF_KuryeFirma_Tur DEFAULT ('Kurye'),   -- Kurye (şehir içi) / Kargo
+    SabitUcret          DECIMAL(18,2)       NOT NULL CONSTRAINT DF_KuryeFirma_Ucret DEFAULT (0),      -- bölge tanımı yoksa veliye yansıyan ücret
+    UcretsizLimit       DECIMAL(18,2)       NULL,              -- bu tutar ve üstü ücretsiz (NULL = yok)
+    TahminiTeslim       NVARCHAR(50)        NULL,              -- "Aynı gün", "1-3 iş günü"
+    TakipUrl            NVARCHAR(300)       NULL,              -- {takipNo} yer tutuculu takip adresi
+    Sira                INT                 NOT NULL CONSTRAINT DF_KuryeFirma_Sira DEFAULT (0),
     AktifMi             BIT                 NOT NULL CONSTRAINT DF_KuryeFirma_Aktif DEFAULT (1),
     CONSTRAINT UQ_KuryeFirma_Kod UNIQUE (Kod),
+    CONSTRAINT CK_KuryeFirma_Tur CHECK (Tur IN ('Kurye', 'Kargo')),
     CONSTRAINT CK_KuryeFirma_Entegrasyon CHECK (EntegrasyonTipi IN ('Api', 'Manuel'))
 );
 GO
@@ -994,12 +1208,65 @@ GO
    --------------------------------------------------------------------- */
 
 INSERT INTO dbo.Ayar (Anahtar, Deger, Aciklama) VALUES
+ ('firma.unvan',            N'Kardelen Kitabevi',            N'Fatura ve alt bilgide görünen ticari unvan'),
+ ('firma.adres',            N'',                             N'Açık adres'),
+ ('firma.telefon',          N'',                             N'Sabit telefon'),
+ ('firma.eposta',           N'',                             N'İletişim e-postası'),
+ ('firma.vergiDairesi',     N'',                             NULL),
+ ('firma.vergiNo',          N'',                             NULL),
+ ('firma.mersisNo',         N'',                             NULL),
+ ('firma.calismaSaatleri',  N'Hafta içi 09.00–18.00',        NULL),
+ ('whatsapp.aktif',         N'0',                            N'1 = sitede WhatsApp destek düğmesi görünür'),
+ ('whatsapp.numara',        N'',                             N'905xxxxxxxxx biçiminde'),
+ ('whatsapp.mesaj',         N'Merhaba, Kardelen Okul hakkında bilgi almak istiyorum.', N'Hazır ilk mesaj'),
+ ('whatsapp.saatler',       N'Hafta içi 09.00–18.00',        NULL),
+ ('odeme.kartAktif',        N'1',                            N'Kartla ödeme açık mı'),
+ ('odeme.havaleAktif',      N'1',                            N'Havale / EFT ile ödeme açık mı'),
+ ('odeme.maxTaksit',        N'6',                            N'Sunulacak en fazla taksit'),
+ ('odeme.taksitAltLimit',   N'500',                          N'Bu tutarın altında yalnız tek çekim'),
+ ('havale.aciklama',        N'Açıklamaya sipariş referans kodunuzu yazın.', N'Havale ekranında veliye gösterilir'),
+ ('kargo.varsayilanUcret',  N'0',                            N'Bölge/firma eşleşmezse teslimat ücreti'),
+ ('kargo.ucretsizLimit',    N'',                             N'Bu tutar ve üstü siparişte teslimat ücretsiz (boş = yok)'),
+ ('kargo.okulaTeslimAktif', N'1',                            N'Okula teslim seçeneği'),
+ ('sms.saglayici',          N'console',                      N'console / netgsm / iletimerkezi / http'),
+ ('sms.baslik',             N'',                             N'Onaylı SMS başlığı (originator)'),
+ ('sms.kullanici',          N'',                             N'Operatör kullanıcı adı / API kullanıcısı'),
+ ('sms.apiUrl',             N'',                             N'Yalnız "http" sağlayıcısı için gönderim adresi'),
+ ('sms.sifre',              N'',                             N'ŞİFRELİ (AES-GCM, AYAR_ANAHTARI). Ekranda gösterilmez'),
+ ('eposta.saglayici',       N'console',                      N'console / smtp'),
+ ('eposta.smtpSunucu',      N'',                             NULL),
+ ('eposta.smtpPort',        N'587',                          NULL),
+ ('eposta.guvenli',         N'0',                            N'1 = 465 / SSL, 0 = STARTTLS'),
+ ('eposta.kullanici',       N'',                             NULL),
+ ('eposta.gonderen',        N'',                             N'Gönderen adresi, ör. Kardelen Okul <bilgi@kardelenokul.com>'),
+ ('eposta.sifre',           N'',                             N'ŞİFRELİ (AES-GCM, AYAR_ANAHTARI). Ekranda gösterilmez'),
  ('HavaleSureGun',          N'3',   N'Havale ödemesi bu kadar gün içinde gelmezse sipariş kapatılır'),
  ('SmsKodGecerlilikDakika', N'5',   N'SMS doğrulama kodunun geçerlilik süresi'),
  ('SmsKodMaxDeneme',        N'5',   N'Bir kod için en fazla deneme'),
  ('GirisMaxBasarisiz',      N'5',   N'Bu kadar hatalı girişten sonra hesap geçici kilitlenir'),
  ('GirisKilitDakika',       N'15',  N'Geçici kilit süresi'),
  ('VarsayilanTckn',         N'11111111111', N'TCKN girilmeyen bireysel e-Arşiv faturaları için');
+GO
+
+INSERT INTO dbo.SayfaIcerik (Slug, Baslik, Icerik, Sira) VALUES
+ ('hakkimizda',     N'Hakkımızda',                   N'[Kardelen Kitabevi tanıtım metni.]', 10),
+ ('iletisim',       N'İletişim',                     N'[İletişim bilgileri firma bilgilerinden otomatik eklenir; buraya ek bilgi yazılabilir.]', 20),
+ ('kvkk',           N'KVKK Aydınlatma Metni',        N'[Metin hukuk biriminden gelecek.]', 30),
+ ('mesafeli-satis', N'Mesafeli Satış Sözleşmesi',    N'[Metin hukuk biriminden gelecek.]', 40),
+ ('iptal-iade',     N'İptal ve İade Koşulları',      N'[Metin hukuk biriminden gelecek.]', 50),
+ ('teslimat',       N'Teslimat Bilgileri',           N'[Kurye ve kargo ile teslimat koşulları.]', 60),
+ ('gizlilik',       N'Gizlilik Politikası',          N'[Metin hukuk biriminden gelecek.]', 70),
+ ('cerez',          N'Çerez Politikası',             N'[Metin hukuk biriminden gelecek.]', 80),
+ ('on-bilgilendirme', N'Ön Bilgilendirme Formu',     N'[Metin hukuk biriminden gelecek.]', 90),
+ ('uyelik-sozlesmesi', N'Üyelik Sözleşmesi',         N'[Metin hukuk biriminden gelecek.]', 100),
+ ('acik-riza',      N'Açık Rıza Metni',              N'[Metin hukuk biriminden gelecek.]', 110),
+ ('odeme-guvenligi', N'Ödeme Güvenliği',             N'[Kart bilgileri sitede saklanmaz; 3D Secure ile banka sayfasında işlenir.]', 120),
+ ('sss',            N'Sıkça Sorulan Sorular',        N'[Sorular ve cevaplar.]', 130);
+GO
+
+INSERT INTO dbo.KuryeFirma (Kod, Ad, Tur, SabitUcret, TahminiTeslim, Sira) VALUES
+ ('MOTO',  N'Moto kurye (şehir içi)', 'Kurye', 0, N'Aynı gün / ertesi gün', 10),
+ ('KARGO', N'Anlaşmalı kargo',        'Kargo', 0, N'1-3 iş günü', 20);
 GO
 
 INSERT INTO dbo.SanalPos (Kod, Ad) VALUES

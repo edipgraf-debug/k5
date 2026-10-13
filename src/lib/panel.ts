@@ -1,6 +1,9 @@
 import 'server-only';
 import { repo } from './data/repo';
 import { listeErisimi } from './listeler';
+import { yonetimRepo } from './data/yonetim';
+import { ticaretRepo } from './data/ticaret';
+import { kalemleriGetir, satirAnahtari, satirFiyati, zorunluToplam } from './kalem';
 import type { KitapListesi, OgrenciOzet, Oturum, TakipSatiri, YayinOzeti } from './types';
 
 export interface SepetOzeti {
@@ -9,6 +12,11 @@ export interface SepetOzeti {
   acik: number;        // sepeti görebilen öğrenci
   acan: number;        // velisi sepeti açan öğrenci
   ulasmayan: number;   // son SMS'i ulaşmayan öğrenci
+  siparis: number;     // sipariş veren öğrenci
+  hazirlayan: string;
+  hazirlayanTip: 'Yonetim' | 'Plasiyer' | 'Okul' | 'Ogretmen' | '';
+  kalemler: { ad: string; tur: 'urun' | 'set'; zorunlu: boolean; fiyat: number; adet: number }[];
+  zorunluToplam: number;
 }
 
 export interface OgrenciSatiri extends OgrenciOzet {
@@ -23,7 +31,7 @@ export interface PanelVerisi {
   sepetler: SepetOzeti[];
   subeler: SubeOzeti[];
   sonYayinlar: YayinOzeti[];
-  toplam: { ogrenci: number; velisiz: number; yayinda: number; taslak: number; ulasmayan: number; sepetiAcik: number; acan: number };
+  toplam: { ogrenci: number; velisiz: number; yayinda: number; taslak: number; ulasmayan: number; sepetiAcik: number; acan: number; siparis: number };
 }
 
 /**
@@ -39,11 +47,18 @@ export async function panelVerisi(o: Oturum, okulId: number, sadeceSubeler: numb
 
   const takip = new Map<number, TakipSatiri[]>();
   for (const l of listeler) takip.set(l.id, (await r.listeTakip(l.id)).filter((t) => izinli.has(t.ogrenciId)));
+  const [siparisli, kalemler] = await Promise.all([(await ticaretRepo()).siparisVerenOgrenciler([okulId]), kalemleriGetir(listeler.flatMap((l) => l.satirlar))]);
+  const y = await yonetimRepo();
+  const kisiler = new Map<number, { ad: string; tip: SepetOzeti['hazirlayanTip'] }>();
+  for (const id of new Set(listeler.map((l) => l.olusturanId))) { const p = await y.personelKaydi(id); kisiler.set(id, { ad: p?.adSoyad ?? '-', tip: p?.tip ?? '' }); }
 
   const sepetler: SepetOzeti[] = listeler.map((l) => {
     const t = takip.get(l.id)!;
+    const h = kisiler.get(l.olusturanId)!;
     return { liste: l, kapsamOgrenci: t.length, acik: t.filter((x) => x.gorebilir).length, acan: t.filter((x) => x.acildi).length,
-      ulasmayan: t.filter((x) => x.sms === 'Hata').length };
+      ulasmayan: t.filter((x) => x.sms === 'Hata').length, siparis: t.filter((x) => siparisli.has(x.ogrenciId)).length, hazirlayan: h.ad, hazirlayanTip: h.tip,
+      kalemler: l.satirlar.map((s) => { const k = kalemler[satirAnahtari(s)]; return { ad: k?.ad ?? '?', tur: k?.tur ?? 'urun', zorunlu: s.zorunlu, fiyat: satirFiyati(s, k), adet: s.adet }; }),
+      zorunluToplam: zorunluToplam(l.satirlar, kalemler) };
   }).sort((a, b) => Number(b.liste.yayinda) - Number(a.liste.yayinda) || a.liste.ad.localeCompare(b.liste.ad, 'tr'));
 
   const ogrenciler: OgrenciSatiri[] = ogr.map((x) => {
@@ -72,6 +87,7 @@ export async function panelVerisi(o: Oturum, okulId: number, sadeceSubeler: numb
       ulasmayan: sepetler.reduce((a, s) => a + s.ulasmayan, 0),
       sepetiAcik: ogrenciler.filter((x) => x.acikSepet).length,
       acan: ogrenciler.filter((x) => x.acilan).length,
+      siparis: ogrenciler.filter((x) => siparisli.has(x.id)).length,
     },
   };
 }
